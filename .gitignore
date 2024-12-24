@@ -1,0 +1,6 @@
+.luacheckrc
+.luacheckrc~
+.gitignore~
+*.lua~
+*.el~
+
