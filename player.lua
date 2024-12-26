@@ -63,6 +63,8 @@ local localplayer = {
 	damage_immune = 0,
 	reset_fall_damage = false,
 	overriding_pose = nil,
+	_was_jumping = false,
+	blocking = 0,
 }
 
 local AIR_DRAG			= 0.98
@@ -350,7 +352,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		local friction = water_friction * velocity_factor
 		local speed = self.water_velocity
 
-		-- Apply depth strider.  TODO!!
+		-- Apply depth strider.
 		local level = math.min (3, self.depth_strider_level)
 		level = touching_ground and level or level / 2
 		if level > 0 then
@@ -559,8 +561,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		end
 	end
 
-	local enable_step_height = moveresult.touching_ground
-		or moveresult.standing_on_object
+	local enable_step_height = self.touching_ground
 	if enable_step_height and self._previously_floating then
 		self._previously_floating = false
 		self.object:clear_property_overrides ({"stepheight"})
@@ -771,7 +772,7 @@ end
 
 core.register_on_teleport_localplayer (function (new_pos)
 	localplayer.fall_distance = 0
-	localplayer.last_fall_y = 0
+	localplayer.last_fall_y = nil
 	if mcl_localplayer.debug then
 		print ("Teleported to: " .. new_pos:to_string ())
 	end
@@ -886,7 +887,7 @@ function localplayer.on_step (dtime, moveresult, params)
 
 	-- Maybe trigger swimming and fall flying.
 	self:set_swimming (self._sprinting and self:is_underwater ())
-	if not self.fall_flying and control.jump and not self.jumping
+	if not self.fall_flying and control.jump and not self._was_jumping
 		and not params.flying and not self.touching_ground
 		and self._immersion_depth == 0 then
 		local def = self.standon and core.get_node_def (self.standon.name)
@@ -908,17 +909,19 @@ function localplayer.on_step (dtime, moveresult, params)
 	self.jumping = control.jump and not self.fall_flying
 
 	-- Apply acceleration.
+	-- Slow down players using shields or bows.  TODO: the bows.
+	local base = self.blocking ~= 0 and 0.2 or 1.0
 	local moving_slowly = self.pose == POSE_CROUCHING
 		or (self.pose == POSE_SWIMMING
 		    and self._immersion_depth <= 0)
 
 	if moving_slowly then
 		local factor = math.min (PLAYER_CROUCH_FACTOR + self.sneak_speed_bonus, 1.0)
-		self.acc_dir.z = control.movement_y * factor
-		self.acc_dir.x = control.movement_x * factor
+		self.acc_dir.z = control.movement_y * factor * base
+		self.acc_dir.x = control.movement_x * factor * base
 	else
-		self.acc_dir.z = control.movement_y
-		self.acc_dir.x = control.movement_x
+		self.acc_dir.z = control.movement_y * base
+		self.acc_dir.x = control.movement_x * base
 	end
 
 	-- Configure a suitable pose.
@@ -1000,6 +1003,7 @@ function localplayer.on_step (dtime, moveresult, params)
 	else
 		self.default_switchtime = t
 	end
+	self._was_jumping = control.jump
 end
 
 function mcl_localplayer.init_player ()
@@ -1124,6 +1128,12 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 	if data.can_fall_fly ~= nil then
 		localplayer.can_fall_fly = (not not data.can_fall_fly)
 	end
+	if data.depth_strider_level ~= nil then
+		if type (data.depth_strider_level) ~= "number" then
+			error ("Invalid enchantment data")
+		end
+		localplayer.depth_strider_level = data.depth_strider_level
+	end
 end
 
 function localplayer:pose_collides (self_pos, pose)
@@ -1236,6 +1246,20 @@ local function dir_to_pitch (dir)
 	return -math.atan2 (-dir.y, xz)
 end
 
+local RIGHT_ARM_BLOCKING_OVERRIDE = {
+	rotation = {
+		vec = vector.new (20, -20, 0):apply (math.rad),
+		absolute = true,
+	},
+}
+
+local LEFT_ARM_BLOCKING_OVERRIDE = {
+	rotation = {
+		vec = vector.new (20, 20, 0):apply (math.rad),
+		absolute = true,
+	},
+}
+
 function localplayer:tick_animation (controls, dtime)
 	local base = self.current_eye_height
 	local target = self.target_eye_height
@@ -1345,12 +1369,30 @@ function localplayer:tick_animation (controls, dtime)
 	self.object:set_bone_override ("Head_Control", {
 		rotation = { vec = rot, absolute = true, },
 	})
+
+	-- Control arm rotation whilst blocking.
+	if self.blocking == 2 then
+		self.object:set_bone_override ("Arm_Right_Pitch_Control",
+					RIGHT_ARM_BLOCKING_OVERRIDE)
+		self.object:set_bone_override ("Arm_Left_Pitch_Control", nil)
+	elseif self.blocking == 1 then
+		self.object:set_bone_override ("Arm_Right_Pitch_Control", nil)
+		self.object:set_bone_override ("Arm_Left_Pitch_Control",
+					LEFT_ARM_BLOCKING_OVERRIDE)
+	else
+		self.object:set_bone_override ("Arm_Right_Pitch_Control", nil)
+		self.object:set_bone_override ("Arm_Left_Pitch_Control", nil)
+	end
 end
 
 function mcl_localplayer.do_posectrl (ctrlword)
 	assert (not ctrlword or (ctrlword >= POSE_STANDING
 					and ctrlword <= POSE_DEATH))
 	localplayer.overriding_pose = ctrlword
+end
+
+function mcl_localplayer.do_shieldctrl (ctrlword)
+	localplayer.blocking = ctrlword
 end
 
 ------------------------------------------------------------------------

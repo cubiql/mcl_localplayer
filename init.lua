@@ -30,6 +30,7 @@ local CLIENTBOUND_REMOVE_ATTRIBUTE_MODIFIER = 'AE'
 local CLIENTBOUND_REGISTER_STATUS_EFFECT = 'AF'
 local CLIENTBOUND_REMOVE_STATUS_EFFECT = 'AG'
 local CLIENTBOUND_POSECTRL = 'AH'
+local CLIENTBOUND_SHIELDCTRL = 'AI'
 
 -- Payload parameters.
 local MAX_PAYLOAD = 65533
@@ -170,6 +171,9 @@ local function receive_modchannel_message (channel_name, sender, message)
 			elseif msgtype == CLIENTBOUND_POSECTRL then
 				local ctrlword = tonumber (payload) -- nil to clear overrides.
 				mcl_localplayer.do_posectrl (ctrlword)
+			elseif msgtype == CLIENTBOUND_SHIELDCTRL then
+				local ctrlword = tonumber (payload) or 0
+				mcl_localplayer.do_shieldctrl (ctrlword)
 			end
 		end
 	end
