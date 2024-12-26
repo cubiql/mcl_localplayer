@@ -1,9 +1,8 @@
 ------------------------------------------------------------------------
 -- Player physics and input.
 --
--- TODO: jump bonuses, fall damage, sprinting, poses, flying, fall
--- flying, cobwebs jump force boosting, shields, riding, bows, fov
--- modifiers, status effects
+-- TODO: shields, riding, bows, knockback, jump bonuses, collision
+-- detection
 ------------------------------------------------------------------------
 
 local POSE_STANDING	= 1
@@ -20,11 +19,8 @@ local PLAYER_EVENT_JUMP = 1
 local localplayer = {
 	acc_dir = vector.zero (),
 	movement_speed = 2.0,
-	-- Increase jump_height to 0.46 (from Minecraft's 0.42) as
-	-- Minetest's globalsteps are more granular and respond to
-	-- velocity changes sooner.
-	jump_height = 9.6,
-	jump_timer = 0.0,
+	jump_height = 8.4,
+	jump_timer = 0,
 	jumping = false,
 	gravity = -1.6,
 	touching_ground = false,
@@ -34,7 +30,6 @@ local localplayer = {
 	water_velocity = 0.4,
 	depth_strider_level = 0,
 	_previously_floating = false,
-	switchtime = nil,
 	_last_standin = nil,
 	_last_standon = nil,
 	collisionbox = nil,
@@ -44,15 +39,12 @@ local localplayer = {
 	pose = POSE_STANDING,
 	default_switchtime = 0.0,
 	fall_flying = false,
-	sleeping = false,
 	swimming = false,
 	animation = "stand",
 	eye_height_time = 0.0,
 	current_eye_height = -1,
 	target_eye_height = 1.6,
 	_last_move_yaw = 0,
-	was_touching_ground = true,
-	_prev_pos = nil,
 	sneak_speed_bonus = 0.0,
 	can_sprint = false,
 	movement_arresting_nodes = {},
@@ -63,10 +55,19 @@ local localplayer = {
 	horiz_collision = false,
 	minor_collision = false,
 	server_movement_state = {},
+	can_fall_fly = false,
+	rocket_ticks = 0,
+	fall_distance = 0.0,
+	last_fall_y = nil,
+	safe_fall_distance = 3.0,
+	damage_immune = 0,
+	reset_fall_damage = false,
+	overriding_pose = nil,
 }
 
 local AIR_DRAG			= 0.98
 local AIR_FRICTION		= 0.91
+local DOLPHIN_GRANTED_FRICTION	= 0.96
 local WATER_DRAG		= 0.8
 local AQUATIC_WATER_DRAG	= 0.9
 local AQUATIC_GRAVITY		= -0.1
@@ -87,9 +88,16 @@ local LIQUID_JUMP_FORCE		= 0.8
 local LIQUID_JUMP_FORCE_ONESHOT	= 6.0
 local LAVA_JUMP_THRESHOLD	= 0.1
 local ONE_TICK			= 0.05
+local TICK_TO_SEC		= 1 / ONE_TICK
 local WATER_DESCENT		= -0.8
 local PLAYER_FLY_DRAG		= 0.6
 local PLAYER_CROUCH_FACTOR	= 0.3
+local FALL_FLYING_DRAG_HORIZ	= 0.99
+local FALL_FLYING_DRAG_ASCENT	= 0.04
+local FALL_FLYING_ACC_DESCENT	= 3.2
+local FALL_FLYING_ROTATION_DRAG = 0.1
+local LEVITATION_TRANSITION	= 0.2
+local SLOW_FALLING_GRAVITY	= -0.2
 
 local function scale_speed (speed, friction)
 	local f = BASE_FRICTION3 / (friction * friction * friction)
@@ -98,10 +106,9 @@ end
 
 function localplayer:get_flying_speed (params)
 	if params.flying then
-		-- TODO: sprinting, spectator mode (??).
 		return self._sprinting and 4.0 or 2.0 -- 2.0 blocks/s
 	else
-		return 0.4 -- 0.4 blocks/s
+		return self._sprinting and 0.52 or 0.4 -- 0.4 blocks/s
 	end
 end
 
@@ -125,12 +132,10 @@ function localplayer:accelerate_relative (acc, speed_x, speed_y)
 	return x, acc_y, z
 end
 
-local function pow_by_step (value, dtime)
-	return math.pow (value, dtime / ONE_TICK)
-end
-
-function localplayer:get_jump_force (moveresult)
-	return self.jump_height
+function localplayer:get_jump_force ()
+	local jump_boost_level
+		= mcl_localplayer.get_effect_level ("leaping")
+	return self.jump_height + (jump_boost_level * 2.0)
 end
 
 function localplayer:jump_actual (v, jump_force)
@@ -143,17 +148,17 @@ function localplayer:jump_actual (v, jump_force)
 		v.z = v.z + math.cos (yaw) * 4.0
 	end
 	mcl_localplayer.send_movement_event (PLAYER_EVENT_JUMP)
+	self.localplayer:set_touching_ground (false)
 	return v
 end
 
 local function horiz_collision (moveresult)
 	for _, item in ipairs (moveresult.collisions) do
-		if item.type == "node"
-			and (item.axis == "x" or item.axis == "z") then
-			return true
+		if item.axis == "x" or item.axis == "z" then
+			return true, item.old_velocity, item.new_velocity
 		end
 	end
-	return false
+	return false, nil
 end
 
 local function clamp (num, min, max)
@@ -264,8 +269,30 @@ function localplayer:will_breach_water (self_pos, dx, dy, dz, params)
 	return false
 end
 
-function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
-	local jump_timer = math.max (self.jump_timer - dtime, 0)
+local BASE_ROCKET_BOOST = 2.0
+local ROCKET_BOOST_FORCE = 30.0
+
+function localplayer:rocket_boost (dir, v)
+	if self.rocket_ticks > 0 then
+		v.x = dir.x * BASE_ROCKET_BOOST
+			+ (dir.x * ROCKET_BOOST_FORCE - v.x) * 0.5
+			+ v.x
+		v.y = dir.y * BASE_ROCKET_BOOST
+			+ (dir.y * ROCKET_BOOST_FORCE - v.y) * 0.5
+			+ v.y
+		v.z = dir.z * BASE_ROCKET_BOOST
+			+ (dir.z * ROCKET_BOOST_FORCE - v.z) * 0.5
+			+ v.z
+		self.rocket_ticks = self.rocket_ticks - 1
+	end
+end
+
+function mcl_localplayer.apply_rocket_use (num_secs)
+	local ticks = math.ceil (num_secs / ONE_TICK)
+	localplayer.rocket_ticks = math.max (localplayer.rocket_ticks, ticks)
+end
+
+function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	local acc_dir = self.acc_dir
 	local acc_speed = self.movement_speed
 	local standin = self._last_standin
@@ -276,45 +303,43 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 		or EMPTY_NODE
 	local gravity = self.gravity
 	local touching_ground = not params.flying and self.touching_ground
+	local was_touching_ground = not params.flying and self._was_touching_ground
 	local horiz_collision = self.horiz_collision
-	self.jump_timer = jump_timer
+	local damage_immune = math.max (self.damage_immune - 1, 0)
+	self.damage_immune = damage_immune
 
-	local p = pow_by_step (AIR_DRAG, dtime)
+	if v.y <= 0.0 and mcl_localplayer.has_effect ("slow_falling") then
+		gravity = math.max (gravity, SLOW_FALLING_GRAVITY)
+		self.reset_fall_damage = true
+	end
+
+	local p = AIR_DRAG
 	acc_dir.x = acc_dir.x * p
 	acc_dir.z = acc_dir.z * p
 
-	local v = self.localplayer:get_velocity ()
 	local fly_y = v.y
-
 	local climbable = standin.climbable or standon.climbable
 	local jumping = self.jumping
-	local h_scale, v_scale
 
 	local velocity_factor = 1.0
-	local liquidtype = self.liquidtype
+	local liquidtype = self._last_liquidtype
 	local server_def = mcl_localplayer.node_defs[standon.name]
 
 	if server_def and server_def._mcl_velocity_factor then
 		velocity_factor = server_def._mcl_velocity_factor
 	end
+	self.jump_timer = self.jump_timer - 1
 
-	-- Don't switch between different liquidtypes more rapidly
-	-- than every tick.
-	if liquidtype ~= self._last_liquidtype then
-		local t = (self.switchtime or self.default_switchtime) + dtime
-
-		if t < ONE_TICK then
-			liquidtype = self._last_liquidtype
-			self.switchtime = t
-		else
-			self._last_liquidtype = liquidtype
-			self.switchtime = nil
-		end
-	else
-		self.switchtime = nil
+	if self.swimming then
+		local pitch = core.camera:get_look_vertical ()
+		local transition_speed = pitch < -0.2 and 0.085 or 0.06
+		v.y = v.y + ((pitch * 20) - v.y) * transition_speed
 	end
 
-	-- TODO: dolphin's grace.
+	if self.fall_flying then
+		local dir = core.camera:get_look_dir ()
+		self:rocket_boost (dir, v)
+	end
 
 	if liquidtype == "water" then
 		local water_vec = self:check_water_flow (self_pos)
@@ -335,18 +360,20 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 			speed = speed + delta * level / 3
 		end
 
+		-- Apply Dolphin's Grace.
+		if mcl_localplayer.has_effect ("dolphin_grace") then
+			friction = DOLPHIN_GRANTED_FRICTION
+		end
+
 		-- Adjust speed by friction.  Minecraft applies
 		-- friction to acceleration (speed), not just the
 		-- previous velocity.
-		local r, z = pow_by_step (friction, dtime), friction
+		local r = friction
 		local base_water_drag = WATER_DRAG
-		local p = pow_by_step (base_water_drag, dtime)
-		h_scale = (1 - r) / (1 - z)
-		v_scale = (1 - p) / (1 - base_water_drag)
+		local p = base_water_drag
 
-		local speed_x, speed_y = speed * h_scale, speed * v_scale
 		local fv_x, fv_y, fv_z
-			= self:accelerate_relative (acc_dir, speed_x, speed_y)
+			= self:accelerate_relative (acc_dir, speed, speed)
 
 		-- Apply friction and acceleration.
 		v.x = v.x * r + fv_x
@@ -358,7 +385,7 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 
 		-- Apply gravity unless this mob is sprinting.
 		if not self._sprinting then
-			v.y = v.y + gravity / 16 * v_scale
+			v.y = v.y + gravity / 16
 			if v.y > -0.06 and v.y < 0 then
 				v.y = -0.06
 			end
@@ -370,10 +397,9 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 		-- collisions, and apply a force to this mob so as to
 		-- breach the water if so.
 		if horiz_collision then
-			local r = 1 / v_scale
-			local diff_tick = v.y * r * ONE_TICK
-			local dx = v.x * r * ONE_TICK
-			local dz = v.z * r * ONE_TICK
+			local diff_tick = v.y * ONE_TICK
+			local dx = v.x * ONE_TICK
+			local dz = v.z * ONE_TICK
 			local will_breach_water
 				= self:will_breach_water (self_pos, dx, 0.6, dz, params)
 			if will_breach_water then
@@ -384,24 +410,19 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 		if water_vec and (water_vec.x >= 0
 					or water_vec.y >= 0
 					or water_vec.z >= 0) then
-			v.x = v.x + water_vec.x * LIQUID_FORCE * h_scale
-			v.y = v.y + water_vec.y * LIQUID_FORCE * v_scale
-			v.z = v.z + water_vec.z * LIQUID_FORCE * h_scale
+			v.x = v.x + water_vec.x * LIQUID_FORCE
+			v.y = v.y + water_vec.y * LIQUID_FORCE
+			v.z = v.z + water_vec.z * LIQUID_FORCE
 		end
 	elseif liquidtype == "lava" then
 		local speed = LAVA_SPEED
-		local r, z = pow_by_step (LAVA_FRICTION, dtime), LAVA_FRICTION
-		h_scale = (1 - r) / (1 - z)
-		v_scale, p = h_scale, r
-
-		local speed_x, speed_y
-			= speed * h_scale, speed * v_scale
+		local r = LAVA_FRICTION
 		local fv_x, fv_y, fv_z
-			= self:accelerate_relative (acc_dir, speed_x, speed_y)
+			= self:accelerate_relative (acc_dir, speed, speed)
 		v.x = v.x * r + fv_x
 		v.y = v.y * p
 		v.z = v.z * r + fv_z
-		v.y = v.y + (gravity / 4.0) * v_scale
+		v.y = v.y + (gravity / 4.0)
 		v.y = v.y + fv_y
 
 		-- If colliding horizontally within lava,
@@ -411,16 +432,56 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 		-- apply a force to this mob so as to breach
 		-- the water if so.
 		if horiz_collision then
-			local r = 1 / v_scale
-			local diff_tick = v.y * r * ONE_TICK
-			local dx = v.x * r * ONE_TICK
-			local dz = v.z * r * ONE_TICK
+			local diff_tick = v.y * ONE_TICK
+			local dx = v.x * ONE_TICK
+			local dz = v.z * ONE_TICK
 			local will_breach_lava
 				= self:will_breach_water (self_pos, dx, 0.6, dz, params)
 			if will_breach_lava then
 				v.y = 6.0
 			end
 		end
+	elseif self.fall_flying then
+		-- Limit fall_distance to 1.0 if vertical velocity is
+		-- less than -0.5 n/tick.
+		if v.y > -10.0 and self.fall_distance > 1.0 then
+			self.fall_distance = 1.0
+		end
+
+		local dir = core.camera:get_look_dir ()
+		local pitch = -core.camera:get_look_vertical ()
+		local horiz = math.sqrt (dir.x * dir.x + dir.z * dir.z)
+		local movement = math.sqrt (v.x * v.x + v.z * v.z)
+		local incline = math.cos (pitch)
+		local v_movement = incline * incline
+		v.y = v.y + -gravity * (-1.0 + v_movement * 0.75)
+		-- Accelerate if moving downward.
+		if v.y < 0.0 and horiz > 0.0 then
+			local acc = v.y * ONE_TICK * -0.1 * v_movement
+			v.x = v.x + (dir.x * acc / horiz) * TICK_TO_SEC
+			v.y = v.y + acc * TICK_TO_SEC
+			v.z = v.z + (dir.z * acc / horiz) * TICK_TO_SEC
+		end
+		-- Arrest horizontal movement when moving upward.
+		if horiz > 0.0 and pitch < 0 then
+			local arrest = movement * ONE_TICK * -math.sin (pitch)
+				* FALL_FLYING_DRAG_ASCENT
+			v.x = v.x + (-dir.x * TICK_TO_SEC) * arrest / horiz
+			v.y = v.y + arrest * FALL_FLYING_ACC_DESCENT * TICK_TO_SEC
+			v.z = v.z + (-dir.z * TICK_TO_SEC) * arrest / horiz
+		end
+
+		-- Apply rotation penalties.
+		if movement > 0.0 then
+			v.x = v.x + (dir.x / horiz * movement - v.x)
+				* FALL_FLYING_ROTATION_DRAG
+			v.z = v.z + (dir.z / horiz * movement - v.z)
+				* FALL_FLYING_ROTATION_DRAG
+		end
+
+		v.x = v.x * FALL_FLYING_DRAG_HORIZ
+		v.z = v.z * FALL_FLYING_DRAG_HORIZ
+		v.y = v.y * AIR_DRAG
 	else
 		-- If not standing on air, apply slippery to a base value of
 		-- 0.6.
@@ -432,10 +493,9 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 		-- render the mob airborne.  Emulate this behavior, in
 		-- order to avoid a marked disparity in the speed of
 		-- mobs that jump while in motion or walk off ledges.
-		if self._was_touching_ground
-			and slippery and slippery > 0 then
+		if was_touching_ground and slippery and slippery > 0 then
 			friction = BASE_SLIPPERY
-		elseif self._was_touching_ground then
+		elseif was_touching_ground then
 			friction = BASE_FRICTION
 		else
 			friction = 1
@@ -467,28 +527,34 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 		-- full speed into the velocity after applying
 		-- friction to the same, which is more logical anyway.
 		local base_air_drag = AIR_DRAG
-		local r, z = pow_by_step (friction, dtime), friction
-		local p = pow_by_step (base_air_drag, dtime)
-		h_scale = (1 - r) / (1 - z)
-		v_scale = (1 - p) / (1 - base_air_drag)
-		local speed_x, speed_y = speed * h_scale, speed * v_scale
+		local r = friction
+		local p = base_air_drag
 		local fv_x, fv_y, fv_z
-			= self:accelerate_relative (acc_dir, speed_x, speed_y)
-		v.x = v.x * r + fv_x
-		v.y = v.y * p + gravity * v_scale * base_air_drag
-		v.z = v.z * r + fv_z
-		v.y = v.y + fv_y
+			= self:accelerate_relative (acc_dir, speed, speed)
+
+		local levitate = mcl_localplayer.get_effect_level ("levitation")
+		if levitate == 0.0 then
+			v.x = v.x * r + fv_x
+			v.y = v.y * p + gravity * base_air_drag
+			v.z = v.z * r + fv_z
+			v.y = v.y + fv_y
+		else
+			v.x = v.x * r + fv_x
+			v.y = v.y * p + ((levitate - v.y) * LEVITATION_TRANSITION) * base_air_drag
+			v.z = v.z * r + fv_z
+			v.y = v.y + fv_y
+			self.reset_fall_damage = true
+		end
 	end
 
 	if jumping then
 		if liquidtype then
-			v.y = v.y + LIQUID_JUMP_FORCE * v_scale
+			v.y = v.y + LIQUID_JUMP_FORCE
 		else
-			if touching_ground and self.jump_timer <= 0 then
-				local force = self:get_jump_force (moveresult)
+			if self.touching_ground and self.jump_timer <= 0 then
+				local force = self:get_jump_force ()
 				v = self:jump_actual (v, force)
-				self.jump_timer = 0.5
-				self.default_switchtime = 0.0
+				self.jump_timer = 10
 			end
 		end
 	end
@@ -514,7 +580,7 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 			jumping = false
 			self.jumping = false
 		end
-		self.reset_fall_damage = 1
+		self.reset_fall_damage = true
 
 		if v.y < 0 and controls.sneak then
 			v.y = 0.0
@@ -522,15 +588,11 @@ function localplayer:motion_step (self_pos, dtime, moveresult, controls, params)
 	end
 
 	if params.flying then
-		local p = pow_by_step (PLAYER_FLY_DRAG, dtime)
-		v_scale = (1 - p) / (1 - PLAYER_FLY_DRAG)
-		v.y = fly_y * p
+		v.y = fly_y * PLAYER_FLY_DRAG
 	end
 
-	self.localplayer:set_velocity (v)
-	v.y = 0
 	-- self:check_collision (self_pos)
-	return h_scale, v_scale
+	return v
 end
 
 function localplayer:check_crouch_axis_x (self_pos, x)
@@ -574,13 +636,10 @@ function localplayer:check_crouch_axis_both (self_pos, x, z)
 	return x, z
 end
 
-function localplayer:crouch_reduce_velocity (self_pos, moveresult, dtime)
-	local v = self.localplayer:get_velocity ()
-
+function localplayer:crouch_reduce_velocity (v, self_pos)
 	v.x = self:check_crouch_axis_x (self_pos, v.x)
 	v.z = self:check_crouch_axis_z (self_pos, v.z)
 	v.x, v.z = self:check_crouch_axis_both (self_pos, v.x, v.z)
-	self.localplayer:set_velocity (v)
 end
 
 function localplayer:may_sprint (controls)
@@ -596,8 +655,6 @@ local FOV_MODIFIER_SPRINTING = "mcl_localplayer:sprint_fov_modifier"
 function localplayer:set_sprinting (is_sprinting)
 	if is_sprinting then
 		self._sprinting = is_sprinting
-		-- TODO: apply FOV adjustment and announce change to server.
-		-- TODO: enable swimming.
 		self:add_physics_factor ("movement_speed", SPEED_MODIFIER_SPRINTING, 0.3,
 					"add_multiplied_total")
 		self:add_physics_factor ("fov_factor", FOV_MODIFIER_SPRINTING, 0.15, "add")
@@ -605,6 +662,18 @@ function localplayer:set_sprinting (is_sprinting)
 		self._sprinting = false
 		self:remove_physics_factor ("movement_speed", SPEED_MODIFIER_SPRINTING)
 		self:remove_physics_factor ("fov_factor", FOV_MODIFIER_SPRINTING)
+	end
+end
+
+function localplayer:set_fall_flying (fall_flying)
+	if self.fall_flying then
+		if not fall_flying then
+			self.fall_flying = false
+			self.rocket_ticks = 0
+		end
+	elseif fall_flying then
+		self.fall_flying = true
+		self.rocket_ticks = 0
 	end
 end
 
@@ -624,11 +693,137 @@ function localplayer:send_movement_state ()
 	local state = self.server_movement_state
 	local in_water = self._immersion_depth > 0 and self.liquidtype == "water"
 	if state.in_water ~= in_water
-		or self._sprinting ~= state.is_sprinting then
+		or self._sprinting ~= state.is_sprinting
+		or self.fall_flying ~= state.is_fall_flying
+		or self.swimming ~= state.is_swimming then
 		state.is_sprinting = self._sprinting
 		state.in_water = in_water
+		state.is_fall_flying = self.fall_flying
+		state.is_swimming = self.swimming
 		mcl_localplayer.send_movement_state (state)
 	end
+end
+
+local function get_y_axis_collisions (moveresult)
+	local collisions = {}
+
+	for _, item in pairs (moveresult.collisions) do
+		if item.type == "node" and item.axis == "y" then
+			table.insert (collisions, item.node_pos)
+		end
+	end
+	return collisions
+end
+
+function localplayer:test_collision (moveresult, v)
+	if not self.horiz_collision then
+		local old, new
+		self.horiz_collision, old, new = horiz_collision (moveresult)
+		self.minor_collision = self._sprinting
+			and self.horiz_collision
+			and self:collision_angle () < EIGHT_DEG
+
+		-- Apply "kinetic damage" when the player collides
+		-- with a wall while fall flying.
+		if self.fall_flying and self.horiz_collision then
+			if old and new then
+				local diff = math.abs (vector.length (old) - vector.length (new))
+				if diff >= 6.0 and self.damage_immune == 0 then
+					mcl_localplayer.send_damage ({
+						type = "kinetic",
+						amount = diff * 0.5,
+					})
+					self.damage_immune = 10
+				end
+			end
+		end
+	end
+	if not self.touching_ground then
+		if moveresult.touching_ground then
+			self.touching_ground
+				= get_y_axis_collisions (moveresult)
+		end
+	end
+end
+
+function localplayer:post_motion_step (v, self_pos, control, params)
+	-- Descend in water or descend or ascend when flying.
+	if self.liquidtype == "water" and control.sneak then
+		v.y = v.y + WATER_DESCENT
+	elseif params.flying then
+		local dir = 0.0
+		if control.sneak then
+			dir = dir + -1.0
+		end
+		if control.jump then
+			dir = dir + 1.0
+		end
+		v.y = v.y + dir * self:get_flying_speed (params) * 3.0
+	end
+
+	local made_contact = self.touching_ground
+	self._last_standon = self.standon
+	self._last_standin = self.standin
+	self._last_liquidtype = self.liquidtype
+	self:check_fall_damage (self_pos, made_contact, params)
+	self._was_touching_ground = self.touching_ground
+end
+
+core.register_on_teleport_localplayer (function (new_pos)
+	localplayer.fall_distance = 0
+	localplayer.last_fall_y = 0
+	if mcl_localplayer.debug then
+		print ("Teleported to: " .. new_pos:to_string ())
+	end
+end)
+
+function localplayer:is_underwater ()
+	local depth = self.swimming and 0.5 or 1.75
+	return self._immersion_depth >= depth
+end
+
+function localplayer:set_swimming (swimming)
+	self.swimming = swimming
+end
+
+function localplayer:check_fall_damage (self_pos, touching_ground, params)
+	-- Integrate fall damage.
+	if not params.flying then
+		local fall_y = self.last_fall_y or self_pos.y
+		local d = self.fall_distance + (fall_y - self_pos.y)
+		self.fall_distance = math.max (d, 0)
+		self.last_fall_y = self_pos.y
+		if self.liquidtype == "water" or self._stuck_in then
+			self.last_fall_y = nil
+			self.fall_distance = 0
+		elseif self.liquidtype == "lava" then
+			self.fall_distance = self.fall_distance / 2
+		end
+
+		if touching_ground then
+			local distance = self.fall_distance
+			if distance > self.safe_fall_distance then
+				if mcl_localplayer.debug then
+					print (string.format ("Detected fall of %.4f nodes", distance))
+				end
+				mcl_localplayer.send_damage ({
+					type = "fall",
+					amount = distance - self.safe_fall_distance,
+					damage_pos = self_pos,
+					collisions = self.touching_ground,
+				})
+			end
+			self.last_fall_y = nil
+			self.fall_distance = 0
+		end
+		if self.reset_fall_damage then
+			self.fall_distance = 0
+		end
+	else
+		self.last_fall_y = nil
+		self.fall_distance = 0
+	end
+	self.reset_fall_damage = false
 end
 
 function localplayer.on_step (dtime, moveresult, params)
@@ -644,11 +839,6 @@ function localplayer.on_step (dtime, moveresult, params)
 			standing_on_object = false,
 			collisions = { },
 		}
-	end
-
-	if self._stuck_in then
-		self._stuck_in = nil
-		self.localplayer:set_velocity (ZERO_VECTOR)
 	end
 
 	-- Set camera yaw and pitch.
@@ -668,11 +858,13 @@ function localplayer.on_step (dtime, moveresult, params)
 		self._last_standin = self.standin
 	end
 
-	-- Compute collision information
-	self.horiz_collision = horiz_collision (moveresult)
-	self.minor_collision = self._sprinting
-		and self.horiz_collision
-		and self:collision_angle () < EIGHT_DEG
+	-- Test movement info for collisions unless it would be
+	-- reverted anyway.
+	local switchtime = self.default_switchtime
+	local t = switchtime + dtime
+	if t < ONE_TICK then
+		self:test_collision (moveresult)
+	end
 
 	-- Compute fluid immersion.
 	local immersion_depth, liquidtype
@@ -682,26 +874,43 @@ function localplayer.on_step (dtime, moveresult, params)
 
 	-- Begin sprinting if possible.
 	if self:may_sprint (control) and control.aux1
-		and self._immersion_depth <= 0
-		and (not self.horiz_collision or self.minor_collision) then
+		and (not control.sneak or params.flying)
+		and (self._immersion_depth <= 0 or self:is_underwater ())
+		and (not self.horiz_collision or self.minor_collision or self.swimming) then
 		if not self._sprinting then
 			self:set_sprinting (true)
 		end
 	elseif self._sprinting then
-		-- TODO: swimming.
 		self:set_sprinting (false)
+	end
+
+	-- Maybe trigger swimming and fall flying.
+	self:set_swimming (self._sprinting and self:is_underwater ())
+	if not self.fall_flying and control.jump and not self.jumping
+		and not params.flying and not self.touching_ground
+		and self._immersion_depth == 0 then
+		local def = self.standon and core.get_node_def (self.standon.name)
+		if not def or not def.climbable then
+			self:set_fall_flying (true)
+		end
+	end
+	if self.fall_flying and (params.flying
+					or self.touching_ground
+					or not self.can_fall_fly
+					or mcl_localplayer.has_effect ("levitation")) then
+		self:set_fall_flying (false)
 	end
 
 	-- Send physics state to server.
 	self:send_movement_state ()
 
 	-- Set jumping flag.
-	self.jumping = control.jump
+	self.jumping = control.jump and not self.fall_flying
 
 	-- Apply acceleration.
 	local moving_slowly = self.pose == POSE_CROUCHING
 		or (self.pose == POSE_SWIMMING
-			and self._immersion_depth < 0)
+		    and self._immersion_depth <= 0)
 
 	if moving_slowly then
 		local factor = math.min (PLAYER_CROUCH_FACTOR + self.sneak_speed_bonus, 1.0)
@@ -719,75 +928,77 @@ function localplayer.on_step (dtime, moveresult, params)
 	end
 	self:tick_animation (control, dtime)
 
-	-- If stuck in a node, force dtime to 0.05, as the velocity is
-	-- to be reset on the next globalstep.
-	if self._stuck_in then
-		dtime = ONE_TICK
-	end
+	----------------------------------------------------------------
+	-- Physics section of globalstep.  The lifespan of the
+	-- localplayer is divided into steps at intervals of ONE_TICK,
+	-- and motion_step and the like are called whenever every such
+	-- interval elapses in order to adjust the velocity and apply
+	-- entity physics.
+	----------------------------------------------------------------
 
-	-- When input is registered, there must be a minimum of a one
-	-- tick delay between its commencement and the commencement of
-	-- the next jump.  Otherwise, Luanti's lesser dtime interval
-	-- may result in jumps being performed prematurely.
-	if control.movement_y >= 0 and not control.jump then
-		self.jump_timer = math.max (self.jump_timer, ONE_TICK)
-	end
-
-	local h_scale, v_scale
-		= self:motion_step (self_pos, dtime, moveresult, control, params)
-
-	-- Descend in water.
-	if self.liquidtype == "water" and control.sneak then
-		local v = self.localplayer:get_velocity ()
-		v.y = v.y + WATER_DESCENT * v_scale
-		self.localplayer:set_velocity (v)
-	elseif params.flying then
-		local dir = 0.0
-		if control.sneak then
-			dir = dir + -1.0
-		end
-		if control.jump then
-			dir = dir + 1.0
-		end
-		local v = self.localplayer:get_velocity ()
-		v.y = v.y + dir * self:get_flying_speed (params) * 3.0 * v_scale
-		self.localplayer:set_velocity (v)
-	end
-
-	-- Minecraft evaluates surface properties before applying
-	-- movement and only does so once per tick.
-	local t = self.default_switchtime + dtime
 	if t >= ONE_TICK then
-		t = t % ONE_TICK
-		self._last_standon = self.standon
-		self._last_standin = self.standin
+		-- Apply that portion of the globalstep which elapsed
+		-- before this globalstep.
+		local adj_pos = params.old_position
+		local v = params.old_velocity
+		local before = ONE_TICK - switchtime % ONE_TICK
 
-		if params.flying then
-			self._was_touching_ground = false
-			self.touching_ground = false
+		if params.flying and params.noclip then
+			adj_pos.x = adj_pos.x + v.x * before
+			adj_pos.y = adj_pos.y + v.y * before
+			adj_pos.z = adj_pos.z + v.z * before
 		else
-			local touching_ground = moveresult.touching_ground
-				or moveresult.standing_on_object
-			self._was_touching_ground = self.touching_ground
-			self.touching_ground = touching_ground
+			adj_pos, v, moveresult
+				= self.localplayer:collision_move (adj_pos, v, before)
+			self:test_collision (moveresult, v)
 		end
-	end
-	self.default_switchtime = t
-	self._last_control = control
-	self._prev_pos = self_pos
 
-	-- Implement crouching by refusing to move forward if doing so
-	-- would result in a fall after one tick.
-	if control.sneak and not params.flying
-		and (moveresult.touching_ground or moveresult.standing_on_object) then
-		self:crouch_reduce_velocity (self_pos, moveresult, dtime)
-	end
-	if self._stuck_in then
-		local v = self.localplayer:get_velocity ()
-		v.x = v.x * self._stuck_in.x
-		v.y = v.y * self._stuck_in.y
-		v.z = v.z * self._stuck_in.z
+		-- Run the physics simulation.
+		local phys_start = switchtime + before
+		while phys_start <= t do
+			local time = math.min (ONE_TICK, t - phys_start)
+			local stuck_in = self._stuck_in
+			if stuck_in then
+				v = vector.zero ()
+				self._stuck_in = nil
+			end
+			self.localplayer:set_touching_ground (self.touching_ground)
+			v = self:motion_step (v, adj_pos, moveresult, control, params)
+			self:post_motion_step (v, adj_pos, control, params)
+
+			-- Clear collision detection flags.  They will
+			-- be set as collisions are detected over the
+			-- span of the next globalstep.
+			self.horiz_collision = false
+			self.touching_ground = false
+
+			-- Implement crouching by refusing to move
+			-- forward if doing so would result in a fall
+			-- after one tick.
+			if control.sneak and not params.flying and self._was_touching_ground then
+				self:crouch_reduce_velocity (v, self_pos)
+			end
+			if stuck_in then
+				v.x = v.x * stuck_in.x
+				v.y = v.y * stuck_in.y
+				v.z = v.z * stuck_in.z
+			end
+			if params.flying and params.noclip then
+				adj_pos.x = adj_pos.x + v.x * time
+				adj_pos.y = adj_pos.y + v.y * time
+				adj_pos.z = adj_pos.z + v.z * time
+			else
+				adj_pos, v, moveresult
+					= self.localplayer:collision_move (adj_pos, v, time)
+				self:test_collision (moveresult, v)
+			end
+			phys_start = phys_start + ONE_TICK
+		end
+		self.localplayer:set_pos (adj_pos)
 		self.localplayer:set_velocity (v)
+		self.default_switchtime = t % ONE_TICK
+	else
+		self.default_switchtime = t
 	end
 end
 
@@ -910,6 +1121,9 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 	if data.can_sprint ~= nil then
 		localplayer.can_sprint = (not not data.can_sprint)
 	end
+	if data.can_fall_fly ~= nil then
+		localplayer.can_fall_fly = (not not data.can_fall_fly)
+	end
 end
 
 function localplayer:pose_collides (self_pos, pose)
@@ -926,12 +1140,12 @@ end
 
 function localplayer:desired_pose (self_pos, controls, params)
 	local pose
-	if self.localplayer:get_hp () == 0 then
+	if self.overriding_pose then
+		return self.overriding_pose
+	elseif self.localplayer:get_hp () == 0 then
 		return POSE_DEATH
 	elseif self.fall_flying then
 		pose = POSE_FALL_FLYING
-	elseif self.sleeping then
-		pose = POSE_SLEEPING
 	elseif self.swimming then
 		pose = POSE_SWIMMING
 	elseif controls.sneak and not params.flying then
@@ -1012,6 +1226,15 @@ local function norm_radians (x)
 end
 
 local FOURTY_DEG = math.rad (40)
+local TWENTY_DEG = math.rad (20)
+local SEVENTY_FIVE_DEG = math.rad (75)
+local FIFTY_DEG = math.rad (50)
+local ONE_HUNDRED_AND_TEN_DEG = math.rad (110)
+
+local function dir_to_pitch (dir)
+	local xz = math.abs (dir.x) + math.abs (dir.z)
+	return -math.atan2 (-dir.y, xz)
+end
 
 function localplayer:tick_animation (controls, dtime)
 	local base = self.current_eye_height
@@ -1045,10 +1268,62 @@ function localplayer:tick_animation (controls, dtime)
 		self.noticed_fov_factor = self.fov_factor
 	end
 
+	-- Animate body.
 	local look_dir = core.camera:get_look_horizontal ()
 	local v = vector.normalize (v)
 	local move_yaw = (math.abs (v.z) < 0.35 and math.abs (v.x) < 0.35)
 		and self._last_move_yaw or math.atan2 (v.z, v.x) - math.pi / 2
+
+	if self.pose == POSE_SWIMMING then
+		local pitch = core.camera:get_look_vertical ()
+		local move_pitch = dir_to_pitch (v)
+		local norm_look_dir = norm_radians (look_dir)
+		local rot = vector.new ((pitch - move_pitch) + TWENTY_DEG,
+			move_yaw - norm_look_dir, 0)
+		self.object:set_bone_override ("Head_Control", {
+			rotation = { vec = rot, absolute = true, },
+		})
+		rot.x = SEVENTY_FIVE_DEG + move_pitch
+		rot.y = move_yaw - norm_look_dir
+		rot.z = math.pi
+		self.object:set_bone_override ("Body_Control", {
+			rotation = { vec = rot, absolute = true, },
+		})
+		self._last_move_yaw = move_yaw
+		return
+	elseif self.pose == POSE_FALL_FLYING then
+		local pitch = -core.camera:get_look_vertical ()
+		local move_pitch = dir_to_pitch (v)
+		local xrot = move_pitch + FIFTY_DEG
+		local yrot = move_yaw - look_dir
+		local rot = vector.new (xrot, yrot, 0)
+		self.object:set_bone_override ("Head_Control", {
+			rotation = { vec = rot, absolute = true, },
+		})
+		local xrot = move_pitch + ONE_HUNDRED_AND_TEN_DEG
+		local yrot = -move_yaw + norm_radians (look_dir)
+		rot.x = xrot
+		rot.y = yrot
+		rot.z = math.pi
+		self.object:set_bone_override ("Body_Control", {
+			rotation = { vec = rot, absolute = true, },
+		})
+		self._last_move_yaw = move_yaw
+		return
+	elseif self.pose == POSE_SLEEPING then
+		self.object:set_bone_override ("Head_Control", {})
+		self.object:set_bone_override ("Body_Control", {
+			rotation = {
+				vec = vector.new (0, 0, 0),
+				absolute = true,
+			},
+		})
+		return
+	elseif self.pose == POSE_DEATH then
+		self.object:set_bone_override ("Head_Control", {})
+		self.object:set_bone_override ("Body_Control", {})
+		return
+	end
 
 	local move_yaw_lim = norm_radians (move_yaw)
 	local look_dir_new = norm_radians (look_dir)
@@ -1060,7 +1335,6 @@ function localplayer:tick_animation (controls, dtime)
 		move_yaw_lim = look_dir_new - FOURTY_DEG
 	end
 	self._last_move_yaw = move_yaw_lim
-		
 	local body = look_dir_new - move_yaw_lim
 	local rot = vector.new (0, body, 0)
 	self.object:set_bone_override ("Body_Control", {
@@ -1071,18 +1345,22 @@ function localplayer:tick_animation (controls, dtime)
 	self.object:set_bone_override ("Head_Control", {
 		rotation = { vec = rot, absolute = true, },
 	})
-
-	-- TODO: swim and fall flying poses.
-	-- TODO: head rotation.
-	-- TODO: send animations to server.
 end
 
+function mcl_localplayer.do_posectrl (ctrlword)
+	assert (not ctrlword or (ctrlword >= POSE_STANDING
+					and ctrlword <= POSE_DEATH))
+	localplayer.overriding_pose = ctrlword
+end
 
 ------------------------------------------------------------------------
 -- Player physics factors.
 ------------------------------------------------------------------------
 
 function localplayer:validate_attribute (field, value)
+	if field == "fov_factor" then
+		return math.max (math.min (value, 3.0), 0.8)
+	end
 	return value
 end
 
@@ -1173,6 +1451,26 @@ function localplayer:stock_value (field)
 	return self._physics_factors[field].base
 end
 
+function mcl_localplayer.register_attribute_modifier (modifier)
+	local op = modifier.op
+	if op == "add" or op == "add_multiplied_total"
+		or op == "add_multiplied_base" or op == "scale_by" then
+		local old_value = localplayer[modifier.field]
+		localplayer:add_physics_factor (modifier.field, modifier.id,
+						modifier.value, modifier.op)
+		if mcl_localplayer.debug then
+			print (string.format ("  %s: %.4f -> %.4f", modifier.field,
+					old_value, localplayer[modifier.field]))
+		end
+	else
+		error ("Invalid attribute modifier operation: " .. op)
+	end
+end
+
+function mcl_localplayer.remove_attribute_modifier (modifier)
+	localplayer:remove_physics_factor (modifier.field, modifier.id)
+end
+
 -- function localplayer:restore_physics_factors ()
 -- 	for field, factors in pairs (self._physics_factors) do
 -- 		-- Upgrade obsolete numerical factors.
@@ -1187,3 +1485,54 @@ end
 -- 		apply_physics_factors (self, field)
 -- 	end
 -- end
+
+------------------------------------------------------------------------
+-- Player status effects.
+------------------------------------------------------------------------
+
+local FOV_MODIFIER_SWIFTNESS = "mcl_localplayer:swiftness_fov_modifier"
+local FOV_MODIFIER_SLOWNESS = "mcl_localplayer:slowness_fov_modifier"
+
+function localplayer:apply_effect (effect)
+	if effect.name == "swiftness" then
+		localplayer:add_physics_factor ("fov_factor", FOV_MODIFIER_SWIFTNESS,
+						math.min (0.10 * effect.level, 0.60), "add")
+	elseif effect.name == "slowness" then
+		localplayer:add_physics_factor ("fov_factor", FOV_MODIFIER_SLOWNESS,
+						math.max (-0.05 * effect.level, -0.10), "add")
+	end
+end
+
+function localplayer:remove_effect (id, effect)
+	if id == "swiftness" then
+		localplayer:remove_physics_factor ("fov_factor", FOV_MODIFIER_SWIFTNESS)
+	elseif id == "slowness" then
+		localplayer:remove_physics_factor ("fov_factor", FOV_MODIFIER_SLOWNESS)
+	end
+end
+
+local EF = {}
+
+function mcl_localplayer.add_status_effect (effect)
+	EF[effect.name] = effect
+	localplayer:apply_effect (effect)
+end
+
+function mcl_localplayer.remove_status_effect (id)
+	if EF[id] then
+		localplayer:remove_effect (id, EF[id])
+		EF[id] = nil
+	end
+end
+
+function mcl_localplayer.get_status_effect (id)
+	return EF[id]
+end
+
+function mcl_localplayer.get_effect_level (id)
+	return EF[id] and EF[id].level or 0.0
+end
+
+function mcl_localplayer.has_effect (id)
+	return EF[id] ~= nil
+end
