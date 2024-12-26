@@ -19,10 +19,17 @@ local SERVERBOUND_PLAYERPOSE = 'ab'
 local SERVERBOUND_MOVEMENT_STATE = 'ac'
 local SERVERBOUND_MOVEMENT_EVENT = 'ad'
 local SERVERBOUND_PLAYERANIM = 'ae'
+local SERVERBOUND_DAMAGE = 'af'
 
 -- Clientbound messages.
 local CLIENTBOUND_HELLO = 'AA'
 local CLIENTBOUND_PLAYER_CAPABILITIES = 'AB'
+local CLIENTBOUND_ROCKET_USE = 'AC'
+local CLIENTBOUND_REGISTER_ATTRIBUTE_MODIFIER = 'AD'
+local CLIENTBOUND_REMOVE_ATTRIBUTE_MODIFIER = 'AE'
+local CLIENTBOUND_REGISTER_STATUS_EFFECT = 'AF'
+local CLIENTBOUND_REMOVE_STATUS_EFFECT = 'AG'
+local CLIENTBOUND_POSECTRL = 'AH'
 
 -- Payload parameters.
 local MAX_PAYLOAD = 65533
@@ -50,6 +57,11 @@ end
 
 function mcl_localplayer.send_playeranim (animname)
 	mcl_localplayer.send (SERVERBOUND_PLAYERANIM .. animname)
+end
+
+function mcl_localplayer.send_damage (damage)
+	local damage = core.write_json (damage)
+	mcl_localplayer.send (SERVERBOUND_DAMAGE .. damage)
 end
 
 ------------------------------------------------------------------------
@@ -116,6 +128,48 @@ local function receive_modchannel_message (channel_name, sender, message)
 		elseif mcl_localplayer.localplayer_initialized then
 			if msgtype == CLIENTBOUND_PLAYER_CAPABILITIES then
 				mcl_localplayer.process_clientbound_player_capabilities (payload)
+			elseif msgtype == CLIENTBOUND_ROCKET_USE then
+				local number = tonumber (payload)
+				assert (number, "Invalid payload in ClientboundRocketUse message")
+				mcl_localplayer.apply_rocket_use (number)
+			elseif msgtype == CLIENTBOUND_REGISTER_ATTRIBUTE_MODIFIER then
+				local modifier = core.parse_json (payload)
+				if type (modifier) ~= "table"
+					or type (modifier.id) ~= "string"
+					or type (modifier.field) ~= "string"
+					or type (modifier.op) ~= "string"
+					or type (modifier.value) ~= "number" then
+					local blurb = "Invalid ClientboundRegisterAttributeModifier message: "
+						.. dump (modifier)
+					error (blurb)
+				end
+				mcl_localplayer.register_attribute_modifier (modifier)
+			elseif msgtype == CLIENTBOUND_REMOVE_ATTRIBUTE_MODIFIER then
+				local modifier = core.parse_json (payload)
+				if type (modifier) ~= "table"
+					or type (modifier.field) ~= "string"
+					or type (modifier.id) ~= "string" then
+					local blurb = "Invalid ClientboundRemoveAttributeModifier message: "
+						.. dump (modifier)
+					error (blurb)
+				end
+				mcl_localplayer.remove_attribute_modifier (modifier)
+			elseif msgtype == CLIENTBOUND_REGISTER_STATUS_EFFECT then
+				local status_effect = core.parse_json (payload)
+				if type (status_effect) ~= "table"
+					or type (status_effect.level) ~= "number"
+					or type (status_effect.factor) ~= "number"
+					or type (status_effect.name) ~= "string" then
+					local blurb = "Invalid ClientboundRegisterStatusEffect message: "
+						.. dump (status_effect)
+					error (blurb)
+				end
+				mcl_localplayer.add_status_effect (status_effect)
+			elseif msgtype == CLIENTBOUND_REMOVE_STATUS_EFFECT then
+				mcl_localplayer.remove_status_effect (payload)
+			elseif msgtype == CLIENTBOUND_POSECTRL then
+				local ctrlword = tonumber (payload) -- nil to clear overrides.
+				mcl_localplayer.do_posectrl (ctrlword)
 			end
 		end
 	end
