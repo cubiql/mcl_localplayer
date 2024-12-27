@@ -1,8 +1,7 @@
 ------------------------------------------------------------------------
 -- Player physics and input.
 --
--- TODO: shields, riding, bows, knockback, jump bonuses, collision
--- detection
+-- TODO: riding, knockback, jump bonuses, collision detection
 ------------------------------------------------------------------------
 
 local POSE_STANDING	= 1
@@ -297,11 +296,14 @@ end
 function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	local acc_dir = self.acc_dir
 	local acc_speed = self.movement_speed
-	local standin = self._last_standin
-		and core.get_node_def (self._last_standin.name)
-		or EMPTY_NODE
-	local standon = self._last_standon
+	local last_standon = self._last_standon
 		and core.get_node_def (self._last_standon.name)
+		or EMPTY_NODE
+	local standin = self.standin
+		and core.get_node_def (self.standin.name)
+		or EMPTY_NODE
+	local standon = self.standon
+		and core.get_node_def (self.standon.name)
 		or EMPTY_NODE
 	local gravity = self.gravity
 	local touching_ground = not params.flying and self.touching_ground
@@ -320,7 +322,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	acc_dir.z = acc_dir.z * p
 
 	local fly_y = v.y
-	local climbable = standin.climbable or standon.climbable
+	local climbable = standin.climbable
 	local jumping = self.jumping
 
 	local velocity_factor = 1.0
@@ -393,6 +395,14 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 			end
 		end
 
+		if water_vec and (water_vec.x >= 0
+					or water_vec.y >= 0
+					or water_vec.z >= 0) then
+			v.x = v.x + water_vec.x * LIQUID_FORCE
+			v.y = v.y + water_vec.y * LIQUID_FORCE
+			v.z = v.z + water_vec.z * LIQUID_FORCE
+		end
+
 		-- If colliding horizontally within water, detect
 		-- whether the result of this movement is vertically
 		-- within 0.6 nodes of a position clear of water and
@@ -407,14 +417,6 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 			if will_breach_water then
 				v.y = 6.0
 			end
-		end
-
-		if water_vec and (water_vec.x >= 0
-					or water_vec.y >= 0
-					or water_vec.z >= 0) then
-			v.x = v.x + water_vec.x * LIQUID_FORCE
-			v.y = v.y + water_vec.y * LIQUID_FORCE
-			v.z = v.z + water_vec.z * LIQUID_FORCE
 		end
 	elseif liquidtype == "lava" then
 		local speed = LAVA_SPEED
@@ -487,7 +489,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	else
 		-- If not standing on air, apply slippery to a base value of
 		-- 0.6.
-		local slippery = standon.groups.slippery
+		local slippery = last_standon.groups.slippery
 		local friction
 		-- The order in which Minecraft applies velocity is
 		-- such that it is scaled by ground friction after
@@ -559,15 +561,6 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 				self.jump_timer = 10
 			end
 		end
-	end
-
-	local enable_step_height = self.touching_ground
-	if enable_step_height and self._previously_floating then
-		self._previously_floating = false
-		self.object:clear_property_overrides ({"stepheight"})
-	elseif not enable_step_height and not self._previously_floating then
-		self._previously_floating = true
-		self.object:set_property_overrides ({stepheight = 0.0})
 	end
 
 	if climbable then
@@ -1004,6 +997,17 @@ function localplayer.on_step (dtime, moveresult, params)
 		self.default_switchtime = t
 	end
 	self._was_jumping = control.jump
+
+	-- Enable or disable stepheight according as this mob is
+	-- colliding with the ground.
+	local enable_step_height = self.touching_ground
+	if enable_step_height and self._previously_floating then
+		self._previously_floating = false
+		self.object:clear_property_overrides ({"stepheight"})
+	elseif not enable_step_height and not self._previously_floating then
+		self._previously_floating = true
+		self.object:set_property_overrides ({stepheight = 0.0})
+	end
 end
 
 function mcl_localplayer.init_player ()
@@ -1210,8 +1214,6 @@ end
 
 function localplayer:desired_animation (controls, v)
 	if math.abs (v.x) > 0.35 or math.abs (v.z) > 0.35 then
-		-- Walking.
-		-- TODO: body movement.
 		if controls.dig then
 			return "walk_mine"
 		else
