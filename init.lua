@@ -6,6 +6,7 @@ print ("*** Loading Mineclonia CSM")
 
 dofile (minetest.get_modpath (modname) .. "/miniflowlib.lua")
 dofile (minetest.get_modpath (modname) .. "/player.lua")
+dofile (minetest.get_modpath (modname) .. "/items.lua")
 
 ------------------------------------------------------------------------
 -- Client-server communication.
@@ -20,6 +21,9 @@ local SERVERBOUND_MOVEMENT_STATE = 'ac'
 local SERVERBOUND_MOVEMENT_EVENT = 'ad'
 local SERVERBOUND_PLAYERANIM = 'ae'
 local SERVERBOUND_DAMAGE = 'af'
+local SERVERBOUND_GET_AMMO = 'ag'
+local SERVERBOUND_RELEASE_USEITEM = 'ah'
+local SERVERBOUND_VISUAL_WIELDITEM = 'ai'
 
 -- Clientbound messages.
 local CLIENTBOUND_HELLO = 'AA'
@@ -31,6 +35,8 @@ local CLIENTBOUND_REGISTER_STATUS_EFFECT = 'AF'
 local CLIENTBOUND_REMOVE_STATUS_EFFECT = 'AG'
 local CLIENTBOUND_POSECTRL = 'AH'
 local CLIENTBOUND_SHIELDCTRL = 'AI'
+local CLIENTBOUND_AMMOCTRL = 'AJ'
+local CLIENTBOUND_BOW_CAPABILITIES = 'AK'
 
 -- Payload parameters.
 local MAX_PAYLOAD = 65533
@@ -63,6 +69,20 @@ end
 function mcl_localplayer.send_damage (damage)
 	local damage = core.write_json (damage)
 	mcl_localplayer.send (SERVERBOUND_DAMAGE .. damage)
+end
+
+function mcl_localplayer.send_get_ammo (challenge)
+	mcl_localplayer.send (SERVERBOUND_GET_AMMO .. challenge)
+end
+
+function mcl_localplayer.send_release_useitem (usetime, challenge)
+	local msg = SERVERBOUND_RELEASE_USEITEM
+		.. usetime .. ',' .. challenge
+	mcl_localplayer.send (msg)
+end
+
+function mcl_localplayer.send_visual_wielditem (wielditem)
+	mcl_localplayer.send (SERVERBOUND_VISUAL_WIELDITEM .. wielditem)
 end
 
 ------------------------------------------------------------------------
@@ -102,6 +122,31 @@ local function process_clientbound_hello (payload)
 						error ("Malformed _mcl_velocity_factor")
 					end
 				end
+				-- Validate fields in bows.
+				if type (handshake.bow_info) ~= "table" then
+					error ("Malformed ClientboundHello")
+				end
+				for k, v in pairs (handshake.bow_info) do
+					if type (k) ~= "string" or type (v) ~= "table" then
+						error ("Malformed handshake.bow_info")
+					end
+					if k == "is_crossbow" then
+						if type (v) ~= "table" then
+							error ("Malformed handshake.is_crossbow")
+						end
+					elseif type (v.charge_time_half) ~= "number"
+						or type (v.charge_time_full) ~= "number"
+						or type (v.texture_0) ~= "string"
+						or type (v.texture_0_wielditem) ~= "string"
+						or type (v.texture_1) ~= "string"
+						or type (v.texture_1_wielditem) ~= "string"
+						or type (v.texture_2) ~= "string"
+						or type (v.texture_2_wielditem) ~= "string"
+						or (v.texture_loaded and type (v.texture_loaded) ~= "string") then
+						error ("Malformed handshake.bow_info")
+					end
+				end
+				mcl_localplayer.init_bows (handshake.bow_info)
 				mcl_localplayer.proto = handshake.proto_version
 				mcl_localplayer.node_defs = handshake.node_definitions
 				mcl_localplayer.pose_defs = {}
@@ -174,6 +219,25 @@ local function receive_modchannel_message (channel_name, sender, message)
 			elseif msgtype == CLIENTBOUND_SHIELDCTRL then
 				local ctrlword = tonumber (payload) or 0
 				mcl_localplayer.do_shieldctrl (ctrlword)
+			elseif msgtype == CLIENTBOUND_AMMOCTRL then
+				local ctrlwords = string.split (payload, ',')
+				if not ctrlwords or #ctrlwords ~= 2
+					or not tonumber (ctrlwords[1])
+					or not tonumber (ctrlwords[2]) then
+					error ("Invalid ClientboundAmmoCtrl payload: " .. payload)
+				end
+				local ctrlword1 = tonumber (ctrlwords[1])
+				local ctrlword2 = tonumber (ctrlwords[2])
+				mcl_localplayer.do_ammoctrl (ctrlword1, ctrlword2)
+			elseif msgtype == CLIENTBOUND_BOW_CAPABILITIES then
+				local caps = core.parse_json (payload)
+				if type (caps) ~= "table"
+					or type (caps.infinity) ~= "boolean"
+					or type (caps.charge_time) ~= "number"
+					or type (caps.challenge) ~= "number" then
+					error ("Invalid ClientboundBowCapabilities payload: " .. payload)
+				end
+				mcl_localplayer.do_bow_capabilities (caps.challenge, caps)
 			end
 		end
 	end

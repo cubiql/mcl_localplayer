@@ -907,6 +907,7 @@ function localplayer.on_step (dtime, moveresult, params)
 	local moving_slowly = self.pose == POSE_CROUCHING
 		or (self.pose == POSE_SWIMMING
 		    and self._immersion_depth <= 0)
+		or mcl_localplayer.is_using_bow ()
 
 	if moving_slowly then
 		local factor = math.min (PLAYER_CROUCH_FACTOR + self.sneak_speed_bonus, 1.0)
@@ -1058,6 +1059,11 @@ local function validate_pose_table (pose)
 		or type (pose.mine.y) ~= "number" then
 		error ("Invalid mine pose")
 	end
+	if type (pose.walk_bow) ~= "table"
+		or type (pose.walk_bow.x) ~= "number"
+		or type (pose.walk_bow.y) ~= "number" then
+		error ("Invalid walk_mine pose")
+	end
 	if type (pose.walk_mine) ~= "table"
 		or type (pose.walk_mine.x) ~= "number"
 		or type (pose.walk_mine.y) ~= "number" then
@@ -1125,6 +1131,12 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 			data.movement_arresting_nodes[node] = vector
 		end
 		localplayer.movement_arresting_nodes = data.movement_arresting_nodes
+	end
+	if data.gamemode ~= nil then
+		if data.gamemode ~= "survival" and data.gamemode ~= "creative" then
+			error ("Unknown gamemode `" .. data.gamemode .. "'")
+		end
+		localplayer.gamemode = data.gamemode
 	end
 	if data.can_sprint ~= nil then
 		localplayer.can_sprint = (not not data.can_sprint)
@@ -1214,7 +1226,10 @@ end
 
 function localplayer:desired_animation (controls, v)
 	if math.abs (v.x) > 0.35 or math.abs (v.z) > 0.35 then
-		if controls.dig then
+		local is_using_bow = mcl_localplayer.is_using_bow_visually ()
+		if is_using_bow then
+			return "walk_bow"
+		elseif controls.dig then
 			return "walk_mine"
 		else
 			return "walk"
@@ -1242,6 +1257,8 @@ local TWENTY_DEG = math.rad (20)
 local SEVENTY_FIVE_DEG = math.rad (75)
 local FIFTY_DEG = math.rad (50)
 local ONE_HUNDRED_AND_TEN_DEG = math.rad (110)
+local THIRTY_DEG = math.deg (30)
+local FOURTY_THREE_DEG = math.rad (43)
 
 local function dir_to_pitch (dir)
 	local xz = math.abs (dir.x) + math.abs (dir.z)
@@ -1381,6 +1398,22 @@ function localplayer:tick_animation (controls, dtime)
 		self.object:set_bone_override ("Arm_Right_Pitch_Control", nil)
 		self.object:set_bone_override ("Arm_Left_Pitch_Control",
 					LEFT_ARM_BLOCKING_OVERRIDE)
+	elseif mcl_localplayer.is_using_bow_visually () then
+		local pitch = math.deg (core.camera:get_look_vertical ())
+		local right_arm_rot = vector.new(pitch + 90, -30, pitch * -1 * .35):apply (math.rad)
+		local left_arm_rot = vector.new (pitch + 90, 43, pitch * 0.35):apply (math.rad)
+		self.object:set_bone_override ("Arm_Right_Pitch_Control", {
+			rotation = {
+				vec = right_arm_rot,
+				absolute = true,
+			},
+		})
+		self.object:set_bone_override ("Arm_Left_Pitch_Control", {
+			rotation = {
+				vec = left_arm_rot,
+				absolute = true,
+			},
+		})
 	else
 		self.object:set_bone_override ("Arm_Right_Pitch_Control", nil)
 		self.object:set_bone_override ("Arm_Left_Pitch_Control", nil)
@@ -1515,20 +1548,13 @@ function mcl_localplayer.remove_attribute_modifier (modifier)
 	localplayer:remove_physics_factor (modifier.field, modifier.id)
 end
 
--- function localplayer:restore_physics_factors ()
--- 	for field, factors in pairs (self._physics_factors) do
--- 		-- Upgrade obsolete numerical factors.
--- 		for id, data in pairs (factors) do
--- 			if id ~= "base" and type (data) == "number" then
--- 				factors[id] = {
--- 					amount = data,
--- 					op = "scale_by",
--- 				}
--- 			end
--- 		end
--- 		apply_physics_factors (self, field)
--- 	end
--- end
+function mcl_localplayer.add_fov_factor (id, factor)
+	localplayer:add_physics_factor ("fov_factor", id, factor, "add")
+end
+
+function mcl_localplayer.clear_fov_factor (id)
+	localplayer:remove_physics_factor ("fov_factor", id)
+end
 
 ------------------------------------------------------------------------
 -- Player status effects.
@@ -1579,4 +1605,12 @@ end
 
 function mcl_localplayer.has_effect (id)
 	return EF[id] ~= nil
+end
+
+------------------------------------------------------------------------
+-- Game modes.
+------------------------------------------------------------------------
+
+function mcl_localplayer.is_creative_enabled ()
+	return localplayer.gamemode == "creative"
 end
