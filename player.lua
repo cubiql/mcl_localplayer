@@ -841,11 +841,13 @@ function localplayer.on_step (dtime, moveresult, params)
 	local yaw = core.camera:get_look_horizontal ()
 
 	-- Set self.standin and self.standon.
-	self.standin = core.get_node_or_nil (self_pos)
+	local diff = math.abs (self_pos.y - (math.floor (self_pos.y) + 0.5))
+	local test_pos = vector.offset (self_pos, 0, 0.01, 0) 
+	self.standin = core.get_node_or_nil (test_pos)
 	self.standon = self.standin
-	if (self_pos.y - math.floor (self_pos.y + 0.5)) < 0.01 then
-		local stand_on = vector.offset (self_pos, 0, -1, 0)
-		self.standon = core.get_node_or_nil (stand_on)
+	if diff <= 0.01 then
+		test_pos.y = test_pos.y - 1
+		self.standon = core.get_node_or_nil (test_pos)
 	end
 	if not self._last_standon or not self._last_standin then
 		self._last_standon = self.standon
