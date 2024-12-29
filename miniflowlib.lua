@@ -28,27 +28,30 @@ local IGNORE_NODE = {
 --This code is more efficient
 local function quick_flow_logic (node, pos_testing, direction)
 	local name = node.name
-	local def = core.get_node_def (node.name)
+	local def = mcl_localplayer.get_node_def (name)
 	if not def then
 		return 0
 	end
-	if def.liquid_type == "source" then
+	local liquid_type = (def.liquidtype or def._liquid_type)
+	if liquid_type == "source" then
 		local node_testing = (core.get_node_or_nil (pos_testing) or IGNORE_NODE)
-		local def = core.get_node_def (node_testing.name)
-		if not def or def.liquid_type ~= "flowing" then
+		local def = mcl_localplayer.get_node_def (node_testing.name)
+		if not def or (def.liquid_type ~= "flowing"
+				and def._liquid_type ~= "flowing") then
 			return 0
 		end
 		return direction
-	elseif def.liquid_type == "flowing" then
+	elseif liquid_type == "flowing" then
 		local node_testing = (core.get_node_or_nil (pos_testing) or IGNORE_NODE)
 		local param2_testing = node_testing.param2
-		local def = core.get_node_def (node_testing.name)
+		local def = mcl_localplayer.get_node_def (node_testing.name)
 		if not def then
 			return 0
 		end
-		if def.liquid_type == "source" then
+		local liquid_type = (def.liquidtype or def._liquid_type)
+		if liquid_type == "source" then
 			return -direction
-		elseif def.liquid_type == "flowing" then
+		elseif liquid_type == "flowing" then
 			if param2_testing < node.param2 then
 				if (node.param2 - param2_testing) > 6 then
 					return -direction
@@ -69,8 +72,9 @@ end
 
 local function quick_flow_vertical (node)
 	local name = node.name
-	local def = core.get_node_def (name)
-	if def and def.liquid_type == "source" then
+	local def = mcl_localplayer.get_node_def (name)
+	if def and (def.liquidtype == "source"
+			or def._liquidtype == "source") then
 		return 0
 	end
 	return node.param2 >= 8 and 1 or 0

@@ -1,6 +1,5 @@
 ------------------------------------------------------------------------
 -- Usable wielditems, in particular, bows.
--- TODO: server and client side visuals.
 ------------------------------------------------------------------------
 
 local current_wielditem = {

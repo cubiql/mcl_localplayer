@@ -1,7 +1,7 @@
 ------------------------------------------------------------------------
 -- Player physics and input.
 --
--- TODO: riding, knockback, jump bonuses, collision detection
+-- TODO: riding, spyglass, knockback, jump bonuses, collision detection
 ------------------------------------------------------------------------
 
 local POSE_STANDING	= 1
@@ -64,6 +64,7 @@ local localplayer = {
 	overriding_pose = nil,
 	_was_jumping = false,
 	blocking = 0,
+	ground_standon = nil,
 }
 
 local AIR_DRAG			= 0.98
@@ -172,8 +173,9 @@ local EMPTY_NODE = {
 }
 
 local function check_one_immersion_depth (node, base_y, pos)
-	local def = node and core.get_node_def (node.name) or nil
-	if def and def.liquid_type and def.liquid_type ~= "none" then
+	local def = node and mcl_localplayer.node_defs [node.name] or nil
+	local liquid_type = def and (def.liquidtype or def._liquidtype)
+	if liquid_type and liquid_type ~= "none" then
 		local height
 		if def.liquid_type == "flowing" then
 			height = 0.1 + node.param2 * 0.1
@@ -193,10 +195,11 @@ function localplayer:check_water_flow (self_pos)
 	node = minetest.get_node_or_nil (self_pos)
 	if node then
 		nn = node.name
-		def = core.get_node_def (nn)
+		def = mcl_localplayer.node_defs[nn]
 	end
 	-- Move item around on flowing liquids
-	if def and def.liquid_type == "flowing" then
+	if def and (def.liquidtype == "flowing"
+			or def._liquid_type == "flowing") then
 		-- Get flowing direction (function call from flowlib),
 		-- if there's a liquid.  NOTE: According to
 		-- Qwertymine, flowlib.quickflow is only reliable for
@@ -207,6 +210,10 @@ function localplayer:check_water_flow (self_pos)
 		return vec
 	end
 	return nil
+end
+
+function mcl_localplayer.get_node_def (name)
+	return mcl_localplayer.node_defs[name]
 end
 
 function localplayer:check_standin (pos, params)
@@ -698,18 +705,37 @@ function localplayer:send_movement_state ()
 	end
 end
 
-local function get_y_axis_collisions (moveresult)
+local function dist_horizontal_sqr (v1, v2)
+	return (v1.x - v2.x) * (v1.x - v2.x)
+		+ (v1.z - v2.z) * (v1.z - v2.z)
+end
+
+local function get_y_axis_collisions (self_pos, moveresult)
 	local collisions = {}
+	local supporting_node, dist
 
 	for _, item in pairs (moveresult.collisions) do
-		if item.type == "node" and item.axis == "y" then
+		if item.type == "node" and item.axis == "y"
+			and item.old_velocity.y < 0 then
 			table.insert (collisions, item.node_pos)
+			local d = dist_horizontal_sqr (self_pos, item.node_pos)
+			if not supporting_node or d < dist then
+				dist = d
+				supporting_node = item.node_pos
+			end
 		end
+	end
+	if supporting_node then
+		local node = core.get_node_or_nil (supporting_node)
+		if node then
+			node.pos = supporting_node
+		end
+		return collisions, node
 	end
 	return collisions
 end
 
-function localplayer:test_collision (moveresult, v)
+function localplayer:test_collision (self_pos, moveresult, v)
 	if not self.horiz_collision then
 		local old, new
 		self.horiz_collision, old, new = horiz_collision (moveresult)
@@ -734,8 +760,8 @@ function localplayer:test_collision (moveresult, v)
 	end
 	if not self.touching_ground then
 		if moveresult.touching_ground then
-			self.touching_ground
-				= get_y_axis_collisions (moveresult)
+			self.touching_ground, self.ground_standon
+				= get_y_axis_collisions (self_pos, moveresult)
 		end
 	end
 end
@@ -849,6 +875,9 @@ function localplayer.on_step (dtime, moveresult, params)
 		test_pos.y = test_pos.y - 1
 		self.standon = core.get_node_or_nil (test_pos)
 	end
+	if self.standon then
+		self.standon.pos = test_pos
+	end
 	if not self._last_standon or not self._last_standin then
 		self._last_standon = self.standon
 		self._last_standin = self.standin
@@ -859,7 +888,15 @@ function localplayer.on_step (dtime, moveresult, params)
 	local switchtime = self.default_switchtime
 	local t = switchtime + dtime
 	if t < ONE_TICK then
-		self:test_collision (moveresult)
+		self:test_collision (self_pos, moveresult)
+	end
+
+	-- Extract supporting nodes from the moveresult if possible.
+	if self.ground_standon then
+		self.standon = self.ground_standon
+	end
+	if self.standon then
+		core.localplayer:set_supporting_node (self.standon.pos)
 	end
 
 	-- Compute fluid immersion.
@@ -949,7 +986,7 @@ function localplayer.on_step (dtime, moveresult, params)
 		else
 			adj_pos, v, moveresult
 				= self.localplayer:collision_move (adj_pos, v, before)
-			self:test_collision (moveresult, v)
+			self:test_collision (adj_pos, moveresult, v)
 		end
 
 		-- Run the physics simulation.
@@ -970,6 +1007,7 @@ function localplayer.on_step (dtime, moveresult, params)
 			-- span of the next globalstep.
 			self.horiz_collision = false
 			self.touching_ground = false
+			self.ground_standon = nil
 
 			-- Implement crouching by refusing to move
 			-- forward if doing so would result in a fall
@@ -989,7 +1027,7 @@ function localplayer.on_step (dtime, moveresult, params)
 			else
 				adj_pos, v, moveresult
 					= self.localplayer:collision_move (adj_pos, v, time)
-				self:test_collision (moveresult, v)
+				self:test_collision (adj_pos, moveresult, v)
 			end
 			phys_start = phys_start + ONE_TICK
 		end
