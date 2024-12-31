@@ -80,8 +80,6 @@ local function quick_flow_vertical (node)
 	return node.param2 >= 8 and 1 or 0
 end
 
-local ZERO_VECTOR = vector.new (0, 0, 0)
-
 local function quick_flow (pos, node)
 	local x = quick_flow_logic (node, {x = pos.x-1, y = pos.y, z = pos.z}, -1)
 		+ quick_flow_logic (node, {x = pos.x+1, y = pos.y, z = pos.z}, 1)

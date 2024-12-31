@@ -7,11 +7,6 @@ local current_wielditem = {
 	name = nil,
 }
 
-local BOW_CHARGE_TIME_HALF = 200000 / 1.0e6
-local BOW_CHARGE_TIME_FULL = 500000 / 1.0e6
-local CROSSBOW_CHARGE_TIME_HALF = 350000 / 1.0e6
-local CROSSBOW_CHARGE_TIME_FULL = 900000 / 1.0e6
-
 local is_bow = {}
 local is_crossbow = {}
 local bow_capabilities = {

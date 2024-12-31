@@ -4,9 +4,11 @@ mcl_localplayer = {
 local modname = core.get_current_modname ()
 print ("*** Loading Mineclonia CSM")
 
+dofile (minetest.get_modpath (modname) .. "/util.lua")
 dofile (minetest.get_modpath (modname) .. "/miniflowlib.lua")
 dofile (minetest.get_modpath (modname) .. "/player.lua")
 dofile (minetest.get_modpath (modname) .. "/items.lua")
+dofile (minetest.get_modpath (modname) .. "/mount.lua")
 
 ------------------------------------------------------------------------
 -- Client-server communication.
@@ -24,6 +26,10 @@ local SERVERBOUND_DAMAGE = 'af'
 local SERVERBOUND_GET_AMMO = 'ag'
 local SERVERBOUND_RELEASE_USEITEM = 'ah'
 local SERVERBOUND_VISUAL_WIELDITEM = 'ai'
+local SERVERBOUND_ACKNOWLEDGE_VEHICLE = 'aj'
+local SERVERBOUND_REFUSE_VEHICLE = 'ak'
+local SERVERBOUND_MOVE_VEHICLE = 'al'
+local SERVERBOUND_DISMOUNT_VEHICLE = 'am'
 
 -- Clientbound messages.
 local CLIENTBOUND_HELLO = 'AA'
@@ -37,6 +43,10 @@ local CLIENTBOUND_POSECTRL = 'AH'
 local CLIENTBOUND_SHIELDCTRL = 'AI'
 local CLIENTBOUND_AMMOCTRL = 'AJ'
 local CLIENTBOUND_BOW_CAPABILITIES = 'AK'
+local CLIENTBOUND_VEHICLE_HANDOFF = 'AL'
+local CLIENTBOUND_VEHICLE_POSITION = 'AM'
+local CLIENTBOUND_RESCIND_VEHICLE = 'AN'
+local CLIENTBOUND_VEHICLE_CAPABILITIES = 'AO'
 
 -- Payload parameters.
 local MAX_PAYLOAD = 65533
@@ -83,6 +93,26 @@ end
 
 function mcl_localplayer.send_visual_wielditem (wielditem)
 	mcl_localplayer.send (SERVERBOUND_VISUAL_WIELDITEM .. wielditem)
+end
+
+function mcl_localplayer.send_acknowledge_vehicle (id)
+	mcl_localplayer.send (SERVERBOUND_ACKNOWLEDGE_VEHICLE .. id)
+end
+
+function mcl_localplayer.send_refuse_vehicle (id)
+	mcl_localplayer.send (SERVERBOUND_REFUSE_VEHICLE .. id)
+end
+
+function mcl_localplayer.send_move_vehicle (id, pos, vel)
+	local payload = SERVERBOUND_MOVE_VEHICLE
+		.. id .. ","
+		.. pos.x .. "," .. pos.y .. "," .. pos.z .. ","
+		.. vel.x .. "," .. vel.y .. "," .. vel.z
+	mcl_localplayer.send (payload)
+end
+
+function mcl_localplayer.send_dismount_vehicle (id)
+	mcl_localplayer.send (SERVERBOUND_DISMOUNT_VEHICLE .. id)
 end
 
 ------------------------------------------------------------------------
@@ -238,6 +268,44 @@ local function receive_modchannel_message (channel_name, sender, message)
 					error ("Invalid ClientboundBowCapabilities payload: " .. payload)
 				end
 				mcl_localplayer.do_bow_capabilities (caps.challenge, caps)
+			elseif msgtype == CLIENTBOUND_VEHICLE_HANDOFF then
+				local name, id = unpack (payload:split (','))
+				if not name or not id or not tonumber (id) then
+					error ("Invalid ClientboundVehicleHandoff message")
+				end
+				mcl_localplayer.handle_vehicle_handoff (name, tonumber (id))
+			elseif msgtype == CLIENTBOUND_VEHICLE_POSITION then
+				local id, x, y, z, vx, vy, vz
+					= unpack (payload:split (','))
+				if not id or not x or not y or not z or not vx or not vy or not vz then
+					error ("Parameters absent from ClientboundVehiclePosition message")
+				end
+				id = tonumber (id)
+				x = tonumber (x)
+				y = tonumber (y)
+				z = tonumber (z)
+				vx = tonumber (vx)
+				vy = tonumber (vy)
+				vz = tonumber (vz)
+				if not id or not x or not y or not z or not vx or not vy or not vz then
+					error ("Invalid ClientboundVehiclePosition message")
+				end
+				local pos = vector.new (x, y, z)
+				local vel = vector.new (vx, vy, vz)
+				mcl_localplayer.handle_vehicle_position (id, pos, vel)
+			elseif msgtype == CLIENTBOUND_RESCIND_VEHICLE then
+				local id = tonumber (payload)
+
+				if not id then
+					error ("Invalid ClientboundRescindVehicle message: " .. payload)
+				end
+				mcl_localplayer.handle_rescind_vehicle (id)
+			elseif msgtype == CLIENTBOUND_VEHICLE_CAPABILITIES then
+				local json = core.parse_json (payload)
+				if not json then
+					error ("Invalid ClientboundVehicleCapabilities message")
+				end
+				mcl_localplayer.handle_vehicle_capabilities (json.id, json)
 			end
 		end
 	end
@@ -254,6 +322,6 @@ end)
 core.register_on_modchannel_signal (function (channel, signal)
 	if channel == mcl_localplayer.modchannel_name
 		and signal == 0 then
-		mcl_localplayer.send (SERVERBOUND_HELLO .. PROTO_VERSION)		
+		mcl_localplayer.send (SERVERBOUND_HELLO .. PROTO_VERSION)
 	end
 end)

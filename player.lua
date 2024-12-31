@@ -4,12 +4,13 @@
 -- TODO: riding, spyglass, knockback, jump bonuses, collision detection
 ------------------------------------------------------------------------
 
-local POSE_STANDING	= 1
-local POSE_CROUCHING	= 2
-local POSE_SLEEPING	= 3
-local POSE_FALL_FLYING	= 4
-local POSE_SWIMMING	= 5
-local POSE_DEATH	= 6
+local POSE_STANDING = 1
+local POSE_CROUCHING = 2
+local POSE_SLEEPING = 3
+local POSE_FALL_FLYING = 4
+local POSE_SWIMMING = 5
+local POSE_MOUNTED = 6
+local POSE_DEATH = 7
 
 local STANDARD_FOV_FACTOR = 1.2
 
@@ -65,7 +66,9 @@ local localplayer = {
 	_was_jumping = false,
 	blocking = 0,
 	ground_standon = nil,
+	mount = nil,
 }
+mcl_localplayer.localplayer = localplayer
 
 local AIR_DRAG			= 0.98
 local AIR_FRICTION		= 0.91
@@ -100,6 +103,7 @@ local FALL_FLYING_ACC_DESCENT	= 3.2
 local FALL_FLYING_ROTATION_DRAG = 0.1
 local LEVITATION_TRANSITION	= 0.2
 local SLOW_FALLING_GRAVITY	= -0.2
+local MIN_VELOCITY		= 0.003 * TICK_TO_SEC
 
 local function scale_speed (speed, friction)
 	local f = BASE_FRICTION3 / (friction * friction * friction)
@@ -416,7 +420,6 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		-- collisions, and apply a force to this mob so as to
 		-- breach the water if so.
 		if horiz_collision then
-			local diff_tick = v.y * ONE_TICK
 			local dx = v.x * ONE_TICK
 			local dz = v.z * ONE_TICK
 			local will_breach_water
@@ -443,7 +446,6 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		-- apply a force to this mob so as to breach
 		-- the water if so.
 		if horiz_collision then
-			local diff_tick = v.y * ONE_TICK
 			local dx = v.x * ONE_TICK
 			local dz = v.z * ONE_TICK
 			local will_breach_lava
@@ -593,11 +595,20 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	end
 
 	-- self:check_collision (self_pos)
+
+	if v.x > -MIN_VELOCITY and v.x < MIN_VELOCITY then
+		v.x = 0
+	end
+	if v.y > -MIN_VELOCITY and v.y < MIN_VELOCITY then
+		v.y = 0
+	end
+	if v.z > -MIN_VELOCITY and v.z < MIN_VELOCITY then
+		v.z = 0
+	end
 	return v
 end
 
 function localplayer:check_crouch_axis_x (self_pos, x)
-	local vec = vector.copy (self_pos)
 	while x ~= 0 and not self:collides (self_pos, x * ONE_TICK, -0.6, 0) do
 		if x > 0 then
 			x = math.max (0, x - ONE_TICK)
@@ -609,7 +620,6 @@ function localplayer:check_crouch_axis_x (self_pos, x)
 end
 
 function localplayer:check_crouch_axis_z (self_pos, z)
-	local vec = vector.copy (self_pos)
 	while z ~= 0 and not self:collides (self_pos, 0, -0.6, z * ONE_TICK) do
 		if z > 0 then
 			z = math.max (0, z - ONE_TICK)
@@ -621,7 +631,6 @@ function localplayer:check_crouch_axis_z (self_pos, z)
 end
 
 function localplayer:check_crouch_axis_both (self_pos, x, z)
-	local vec = vector.copy (self_pos)
 	while x ~= 0 and not self:collides (self_pos, x * ONE_TICK, -0.6, z * ONE_TICK) do
 		if x > 0 then
 			x = math.max (0, x - ONE_TICK)
@@ -866,9 +875,26 @@ function localplayer.on_step (dtime, moveresult, params)
 	core.camera:set_look_vertical (control.pitch)
 	local yaw = core.camera:get_look_horizontal ()
 
+	-- Am I mounted?
+	local mount = self.object:get_attach ()
+	mcl_localplayer.update_mounting (mount)
+	if mount then
+		self.fall_distance = 0.0
+		self.last_fall_y = nil
+		self.localplayer:set_touching_ground (nil)
+
+		-- Configure a suitable pose.
+		local pose = POSE_MOUNTED
+		if pose ~= self.pose then
+			self:apply_pose (pose)
+		end
+		self:tick_animation (control, dtime)
+		return
+	end
+
 	-- Set self.standin and self.standon.
 	local diff = math.abs (self_pos.y - (math.floor (self_pos.y) + 0.5))
-	local test_pos = vector.offset (self_pos, 0, 0.01, 0) 
+	local test_pos = vector.offset (self_pos, 0, 0.01, 0)
 	self.standin = core.get_node_or_nil (test_pos)
 	self.standon = self.standin
 	if diff <= 0.01 then
@@ -1157,6 +1183,9 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 		if not data.pose_defs[POSE_DEATH] then
 			error ("Server did not define POSE_DEATH")
 		end
+		if not data.pose_defs[POSE_MOUNTED] then
+			error ("Server did not define POSE_MOUNTED")
+		end
 		mcl_localplayer.pose_defs = data.pose_defs
 		localplayer:apply_pose (localplayer.pose)
 	end
@@ -1246,18 +1275,8 @@ function localplayer:apply_pose (pose)
 		})
 		self.collisionbox = posedef.collisionbox
 
-		if posedef.eye_height ~= self.target_eye_height then
-			if self.current_eye_height == -1 then
-				self.current_eye_height = posedef.eye_height
-				local v = vector.new (0, posedef.eye_height, 0)
-				core.camera:set_offset (v)
-			else
-				local v = core.camera:get_offset ()
-				self.current_eye_height = v.y
-			end
-			self.eye_height_time = 0.0
-			self.target_eye_height = posedef.eye_height
-		end
+		self:set_physics_factor_base ("target_eye_height",
+					posedef.eye_height)
 		self.object:set_animation (posedef[self.animation], 0.05)
 	end
 	mcl_localplayer.send_playerpose (pose)
@@ -1412,6 +1431,15 @@ function localplayer:tick_animation (controls, dtime)
 	local look_dir_new = norm_radians (look_dir)
 	local diff = norm_radians (move_yaw_lim - look_dir_new)
 
+	if self.pose == POSE_MOUNTED then
+		local attach = self.object:get_attach ()
+		if attach then
+			look_dir_new = 0.0
+			move_yaw_lim = 0.0
+			diff = 0.0
+		end
+	end
+
 	if diff > FOURTY_DEG then
 		move_yaw_lim = look_dir_new + FOURTY_DEG
 	elseif diff < -FOURTY_DEG then
@@ -1482,7 +1510,21 @@ function localplayer:validate_attribute (field, value)
 end
 
 function localplayer:post_apply_physics_factor (field, oldvalue, value)
-	-- Nothing here but crickets.
+	if field == "target_eye_height" then
+		if oldvalue == value then
+			return
+		end
+
+		if self.current_eye_height == -1 then
+			self.current_eye_height = value
+			local v = vector.new (0, value, 0)
+			core.camera:set_offset (v)
+		else
+			local v = core.camera:get_offset ()
+			self.current_eye_height = v.y
+		end
+		self.eye_height_time = 0.0
+	end
 end
 
 local function apply_physics_factors (self, field)
