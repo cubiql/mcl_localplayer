@@ -1,6 +1,6 @@
 ------------------------------------------------------------------------
 -- Mob & vehicle mounting.
--- TODO: status effects, knockback, teleportation, poses, animations.
+-- TODO: status effects, knockback, animations.
 -- TODO: unify many functions with player.lua.
 ------------------------------------------------------------------------
 
@@ -35,6 +35,12 @@ local mob_table = {
 	_driver_eye_height = 0.0,
 	_last_sent_pos = nil,
 	_last_selt_vel = nil,
+	animation = {
+	},
+	_current_animation = nil,
+	_default_stepheight = 0.6,
+	_EF = {}, -- Status effects.
+	acc_speed = 0.0,
 }
 
 function mob_table:on_activate ()
@@ -169,14 +175,7 @@ local function get_y_axis_collisions (self_pos, moveresult)
 	return collisions
 end
 
-local function horiz_collision (moveresult)
-	for _, item in ipairs (moveresult.collisions) do
-		if item.axis == "x" or item.axis == "z" then
-			return true
-		end
-	end
-	return false
-end
+local horiz_collision = mcl_localplayer.horiz_collision
 
 function mob_table:test_collision (self_pos, moveresult, v)
 	if not self.horiz_collision then
@@ -188,7 +187,29 @@ function mob_table:test_collision (self_pos, moveresult, v)
 				= get_y_axis_collisions (self_pos, moveresult)
 		end
 	end
+
+	-- Enable or disable stepheight according as this mob is
+	-- colliding with the ground.
+	local enable_step_height = not not self.touching_ground
+	if enable_step_height ~= self._previously_floating then
+		mcl_localplayer.send_configure_vehicle ({
+			touching_ground = enable_step_height,
+			id = self.object:get_id (),
+		})
+		self._previously_floating = enable_step_height
+		if enable_step_height then
+			self.object:set_property_overrides ({
+				stepheight = self._default_stepheight,
+			})
+		else
+			self.object:set_property_overrides ({
+				stepheight = 0.0,
+			})
+		end
+	end
 end
+
+local touching_only_ignore = mcl_localplayer.touching_only_ignore
 
 function mob_table:check_fall_damage (self_pos, touching_ground, params)
 	-- Integrate fall damage.
@@ -204,7 +225,8 @@ function mob_table:check_fall_damage (self_pos, touching_ground, params)
 			self.fall_distance = self.fall_distance / 2
 		end
 
-		if touching_ground then
+		if touching_ground
+			and not touching_only_ignore (touching_ground) then
 			local distance = self.fall_distance
 			if distance > self.safe_fall_distance then
 				if mcl_localplayer.debug then
@@ -241,14 +263,47 @@ function mob_table:post_motion_step (v, self_pos, control, params)
 	self._was_touching_ground = self.touching_ground
 end
 
+local DEFAULT_ANIM_SPEED = 25
+
+function mob_table:set_animation (name)
+	if name == self._current_animation then
+		return
+	end
+
+	if not name then
+		self.object:set_animation (nil)
+	else
+		local animparams = self.animation[name]
+		if animparams then
+			self.object:set_animation (animparams, 0.2, true)
+			self._current_animation = name
+		end
+	end
+end
+
+function mob_table:set_animation_speed ()
+	local anim = self._current_animation
+	if not anim or anim ~= "walk" then
+		self.object:set_animation_frame_speed (DEFAULT_ANIM_SPEED)
+		return
+	end
+	local v = self.object:get_velocity ()
+	local v1 = math.sqrt (math.sqrt (v.x * v.x + v.z * v.z))
+	local walk_speed = self.animation.walk_speed
+		or DEFAULT_ANIM_SPEED
+	self.object:set_animation_frame_speed (v1 * walk_speed)
+end
+
 function mob_table:has_effect (name)
-	-- TODO
-	return false
+	return self._EF[name] ~= nil
 end
 
 function mob_table:get_effect_level (name)
-	-- TODO
-	return 0
+	if self._EF[name] then
+		return self._EF[name].level
+	else
+		return 0
+	end
 end
 
 function mob_table:accelerate_relative (acc, speed_x, speed_y)
@@ -286,10 +341,6 @@ function mob_table:jump_actual (v, jump_force)
 		v.z = v.z + math.cos (yaw) * 4.0
 	end
 	return v
-end
-
-local function clamp (num, min, max)
-	return math.min (max, math.max (num, min))
 end
 
 function mob_table:will_breach_water (self_pos, dx, dy, dz, params)
@@ -341,9 +392,11 @@ local function scale_speed (speed, friction)
 	return speed * f
 end
 
+local clamp = mcl_localplayer.clamp
+
 function mob_table:motion_step (v, self_pos, moveresult, controls, params)
 	local acc_dir = self.acc_dir
-	local acc_speed = self.movement_speed
+	local acc_speed = self.acc_speed
 	local last_standon = self._last_standon
 		and core.get_node_def (self._last_standon.name)
 		or EMPTY_NODE
@@ -358,7 +411,6 @@ function mob_table:motion_step (v, self_pos, moveresult, controls, params)
 	local was_touching_ground = self._was_touching_ground
 	local horiz_collision = self.horiz_collision
 
-	-- TODO: mount status effects.
 	if v.y <= 0.0 and self:has_effect ("slow_falling") then
 		gravity = math.max (gravity, SLOW_FALLING_GRAVITY)
 		self.reset_fall_damage = true
@@ -617,6 +669,15 @@ function mob_table:drive_physics (dtime, moveresult, params, control)
 	self._immersion_depth = immersion_depth
 	self.liquidtype = liquidtype
 
+	-- Set animation speed.
+	local v = self.object:get_velocity ()
+	if (v.x * v.x + v.z * v.z) > 0.25 then
+		self:set_animation ("walk")
+	else
+		self:set_animation ("stand")
+	end
+	self:set_animation_speed ()
+
 	--------------------------------------------------------
 	-- Physics section of globalstep.
 	--------------------------------------------------------
@@ -696,9 +757,7 @@ function mob_table:import_vehicle_capabilities (caps)
 		end
 		self._driving = caps._driving
 		if not self._driving then
-			self.object:set_velocity (nil)
-			self.object:set_pos (nil)
-			self.object:set_rotation (nil)
+			self:stop_driving ()
 		else
 			local self_pos = self.object:get_pos ()
 			self.object:set_velocity (ZERO_VECTOR)
@@ -719,15 +778,40 @@ function mob_table:import_vehicle_capabilities (caps)
 		end
 		self.jump_height = caps.jump_height
 	end
+
+	if caps.ef_set and caps._EF then
+		if type (caps._EF) ~= "table" then
+			error ("Invalid status effect table in vehicle capability table")
+		end
+		for k, v in pairs (caps._EF) do
+			if type (k) ~= "string"
+				or type (v) ~= "table"
+				or type (v.level) ~= "number"
+				or type (v.factor) ~= "number" then
+				error ("Invalid status effect definition")
+			end
+		end
+		self._EF = caps._EF
+	elseif caps.ef_set then
+		self._EF = {}
+	end
+end
+
+function mob_table:stop_driving ()
+	self._previously_floating = nil
+	self.object:set_animation (nil)
+	self.object:set_animation_frame_speed (nil)
+	self.object:set_velocity (nil)
+	self.object:set_pos (nil)
+	self.object:set_rotation (nil)
+	self.object:clear_property_overrides ({"stepheight"})
 end
 
 function mob_table:dismount ()
 	self._driving = false
 	self._last_sent_pos = nil
 	self._last_sent_vel = nil
-	self.object:set_velocity (nil)
-	self.object:set_pos (nil)
-	self.object:set_rotation (nil)
+	self:stop_driving ()
 	local p = mcl_localplayer.localplayer
 	p:remove_physics_factor ("target_eye_height", DRIVER_EYE_HEIGHT_FACTOR)
 end
@@ -769,6 +853,19 @@ local horse = table.merge (mob_table, {
 	safe_fall_distance = 6.0,
 	fall_damage_multiplier = 0.5,
 	_driver_eye_height = 0.3,
+	animation = {
+		stand = {
+			x = 0,
+			y = 0,
+		},
+		stand_speed = 25,
+		walk = {
+			x = 0,
+			y = 40,
+		},
+		walk_speed = 25,
+	},
+	_default_stepheight = 1.01,
 })
 
 function horse:apply_driver_input (dtime, controls)
@@ -837,8 +934,83 @@ mcl_localplayer.register_mountable_mob ("mobs_mc:zombie_horse", horse)
 mcl_localplayer.register_mountable_mob ("mobs_mc:donkey", horse)
 mcl_localplayer.register_mountable_mob ("mobs_mc:mule", horse)
 
+--- Pig.
+
+local pig = table.merge (mob_table, {
+	_drive_boost_total = 0.0,
+	_drive_boost_elapsed = 0.0,
+	animation = {
+		stand = {
+			x = 0,
+			y = 0,
+		},
+		stand_speed = 0,
+		walk = {
+			x = 0,
+			y = 40,
+		},
+		walk_speed = 55,
+	},
+})
+
+local PIG_DRIVE_BONUS = 0.225
+
+function pig:init_mount ()
+	mob_table.init_mount (self)
+	self._drive_boost_elapsed = 0.0
+	self._drive_boost_total = 0.0
+end
+
+function pig:import_vehicle_capabilities (caps)
+	mob_table.import_vehicle_capabilities (self, caps)
+	if caps._drive_boost_total then
+		if type (caps._drive_boost_total) ~= "number" then
+			error ("Invalid _drive_boost_total")
+		end
+		self._drive_boost_total = caps._drive_boost_total
+
+		if caps._drive_boost_elapsed then
+			if type (caps._drive_boost_elapsed) ~= "number" then
+				error ("Invalid _drive_boost_elapsed")
+			end
+			self._drive_boost_elapsed = caps._drive_boost_elapsed
+		else
+			self._drive_boost_elapsed = 0.0
+		end
+	end
+end
+
+function pig:apply_driver_input (dtime, controls)
+	local bonus = 1.0
+	if self._drive_boost_total ~= 0.0 then
+		local t = self._drive_boost_elapsed + dtime
+		if t > self._drive_boost_total then
+			self._drive_boost_total = 0.0
+		else
+			local total = self._drive_boost_total
+			bonus = 1.0 + 1.5 * math.sin (t / total * math.pi)
+		end
+		self._drive_boost_elapsed = t
+	end
+	self.acc_speed = self.movement_speed * PIG_DRIVE_BONUS * bonus
+	self.acc_dir.z = 1
+
+	self.jumping = false
+	if self.horiz_collision then
+		self.jumping = true
+	end
+end
+
+mcl_localplayer.register_mountable_mob ("mobs_mc:pig", pig)
+
 ------------------------------------------------------------------------
--- Mob mounting protocol.
+-- Mounting other vehicles (namely boats).
+------------------------------------------------------------------------
+
+-- TODO
+
+------------------------------------------------------------------------
+-- Object mounting protocol.
 ------------------------------------------------------------------------
 
 local pending_handoff = nil

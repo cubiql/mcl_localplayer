@@ -161,15 +161,23 @@ end
 local function horiz_collision (moveresult)
 	for _, item in ipairs (moveresult.collisions) do
 		if item.axis == "x" or item.axis == "z" then
-			return true, item.old_velocity, item.new_velocity
+			-- Exclude ignore nodes from collision detection.
+			if item.type ~= "node"
+				or core.get_node_or_nil (item.node_pos) then
+				return true, item.old_velocity, item.new_velocity
+			end
 		end
 	end
 	return false, nil
 end
 
+mcl_localplayer.horiz_collision = horiz_collision
+
 local function clamp (num, min, max)
 	return math.min (max, math.max (num, min))
 end
+
+mcl_localplayer.clamp = clamp
 
 local EMPTY_NODE = {
 	name = "ignore",
@@ -773,6 +781,17 @@ function localplayer:test_collision (self_pos, moveresult, v)
 				= get_y_axis_collisions (self_pos, moveresult)
 		end
 	end
+
+	-- Enable or disable stepheight according as this mob is
+	-- colliding with the ground.
+	local enable_step_height = self.touching_ground
+	if enable_step_height and self._previously_floating then
+		self._previously_floating = false
+		self.object:clear_property_overrides ({"stepheight"})
+	elseif not enable_step_height and not self._previously_floating then
+		self._previously_floating = true
+		self.object:set_property_overrides ({stepheight = 0.0})
+	end
 end
 
 function localplayer:post_motion_step (v, self_pos, control, params)
@@ -815,6 +834,17 @@ function localplayer:set_swimming (swimming)
 	self.swimming = swimming
 end
 
+local function touching_only_ignore (collisions)
+	for _, node_pos in pairs (collisions) do
+		if core.get_node_or_nil (node_pos) then
+			return false
+		end
+	end
+	return true
+end
+
+mcl_localplayer.touching_only_ignore = touching_only_ignore
+
 function localplayer:check_fall_damage (self_pos, touching_ground, params)
 	-- Integrate fall damage.
 	if not params.flying then
@@ -829,7 +859,8 @@ function localplayer:check_fall_damage (self_pos, touching_ground, params)
 			self.fall_distance = self.fall_distance / 2
 		end
 
-		if touching_ground then
+		if touching_ground
+			and not touching_only_ignore (touching_ground) then
 			local distance = self.fall_distance
 			if distance > self.safe_fall_distance then
 				if mcl_localplayer.debug then
@@ -1064,17 +1095,6 @@ function localplayer.on_step (dtime, moveresult, params)
 		self.default_switchtime = t
 	end
 	self._was_jumping = control.jump
-
-	-- Enable or disable stepheight according as this mob is
-	-- colliding with the ground.
-	local enable_step_height = self.touching_ground
-	if enable_step_height and self._previously_floating then
-		self._previously_floating = false
-		self.object:clear_property_overrides ({"stepheight"})
-	elseif not enable_step_height and not self._previously_floating then
-		self._previously_floating = true
-		self.object:set_property_overrides ({stepheight = 0.0})
-	end
 end
 
 function mcl_localplayer.init_player ()
