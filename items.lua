@@ -130,6 +130,7 @@ function mcl_localplayer.item_globalstep (dtime)
 			end
 		end
 	end
+	mcl_localplayer.check_spyglass (controls)
 end
 
 function mcl_localplayer.do_ammoctrl (ammo, challenge)
@@ -198,3 +199,36 @@ core.register_on_item_place (function (item, pointed_thing)
 	end
 	return false
 end)
+
+------------------------------------------------------------------------
+-- Spyglass.
+------------------------------------------------------------------------
+
+local SPYGLASS_FOV_MODIFIER = "mcl_localplayer:spyglass"
+local spyglass_active = nil
+
+local spyglass_hud = {
+	type = "image",
+	position = {x = 0.5, y = 0.5},
+	scale = {x = -100, y = -100},
+	text = "mcl_spyglass_scope.png",
+}
+
+function mcl_localplayer.check_spyglass ()
+	local spyglass_enabled
+		= current_wielditem.name == "mcl_spyglass:spyglass"
+	if spyglass_enabled then
+		local controls = core.localplayer:get_control ()
+		spyglass_enabled = controls.zoom or controls.use
+	end
+	if spyglass_enabled then
+		if not spyglass_active then
+			mcl_localplayer.add_fov_factor (SPYGLASS_FOV_MODIFIER, -20.0)
+			spyglass_active = core.localplayer:hud_add (spyglass_hud)
+		end
+	elseif spyglass_active then
+		mcl_localplayer.clear_fov_factor (SPYGLASS_FOV_MODIFIER)
+		core.localplayer:hud_remove (spyglass_active)
+		spyglass_active = nil
+	end
+end

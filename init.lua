@@ -1,5 +1,5 @@
 mcl_localplayer = {
-	debug = true,
+	debug = false,
 }
 local modname = core.get_current_modname ()
 print ("*** Loading Mineclonia CSM")
@@ -103,9 +103,9 @@ function mcl_localplayer.send_refuse_vehicle (id)
 	mcl_localplayer.send (SERVERBOUND_REFUSE_VEHICLE .. id)
 end
 
-function mcl_localplayer.send_move_vehicle (id, pos, vel)
+function mcl_localplayer.send_move_vehicle (id, tsc, pos, vel)
 	local payload = SERVERBOUND_MOVE_VEHICLE
-		.. id .. ","
+		.. id .. "," .. tsc .. ","
 		.. pos.x .. "," .. pos.y .. "," .. pos.z .. ","
 		.. vel.x .. "," .. vel.y .. "," .. vel.z
 	mcl_localplayer.send (payload)

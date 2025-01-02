@@ -1,7 +1,7 @@
 ------------------------------------------------------------------------
 -- Player physics and input.
 --
--- TODO: riding, spyglass, knockback, jump bonuses, collision detection
+-- TODO: knockback, jump bonuses, collision detection
 ------------------------------------------------------------------------
 
 local POSE_STANDING = 1
@@ -12,7 +12,7 @@ local POSE_SWIMMING = 5
 local POSE_MOUNTED = 6
 local POSE_DEATH = 7
 
-local STANDARD_FOV_FACTOR = 1.2
+local STANDARD_FOV_FACTOR = 1.0
 
 local PLAYER_EVENT_JUMP = 1
 
@@ -675,7 +675,7 @@ function localplayer:set_sprinting (is_sprinting)
 		self._sprinting = is_sprinting
 		self:add_physics_factor ("movement_speed", SPEED_MODIFIER_SPRINTING, 0.3,
 					"add_multiplied_total")
-		self:add_physics_factor ("fov_factor", FOV_MODIFIER_SPRINTING, 0.15, "add")
+		self:add_physics_factor ("fov_factor", FOV_MODIFIER_SPRINTING, 0.10, "add")
 	else
 		self._sprinting = false
 		self:remove_physics_factor ("movement_speed", SPEED_MODIFIER_SPRINTING)
@@ -1358,6 +1358,8 @@ local LEFT_ARM_BLOCKING_OVERRIDE = {
 	},
 }
 
+local DEFAULT_FOV = 86.1
+
 function localplayer:tick_animation (controls, dtime)
 	local base = self.current_eye_height
 	local target = self.target_eye_height
@@ -1386,7 +1388,8 @@ function localplayer:tick_animation (controls, dtime)
 
 	-- Animate FOV.
 	if self.fov_factor ~= self.noticed_fov_factor then
-		self.localplayer:set_fov (self.fov_factor, true, 0.20)
+		local fov = DEFAULT_FOV * self.fov_factor
+		self.localplayer:set_fov (fov, false, 0.20)
 		self.noticed_fov_factor = self.fov_factor
 	end
 
@@ -1524,7 +1527,7 @@ end
 
 function localplayer:validate_attribute (field, value)
 	if field == "fov_factor" then
-		return math.max (math.min (value, 3.0), 0.8)
+		return math.max (math.min (value, 3.0), 0.2)
 	end
 	return value
 end
