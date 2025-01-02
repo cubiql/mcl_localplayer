@@ -41,6 +41,7 @@ local mob_table = {
 	_default_stepheight = 0.6,
 	_EF = {}, -- Status effects.
 	acc_speed = 0.0,
+	_tsc = 0.0, -- Timestamp counter.
 }
 
 function mob_table:on_activate ()
@@ -681,6 +682,8 @@ function mob_table:drive_physics (dtime, moveresult, params, control)
 	--------------------------------------------------------
 	-- Physics section of globalstep.
 	--------------------------------------------------------
+	local tsc = self._tsc + dtime
+	self._tsc = tsc
 	if t >= ONE_TICK then
 		-- Apply that portion of the globalstep which elapsed
 		-- before this globalstep.
@@ -731,7 +734,8 @@ function mob_table:drive_physics (dtime, moveresult, params, control)
 			local id = self.object:get_id ()
 			self._last_sent_pos = adj_pos
 			self._last_sent_vel = v
-			mcl_localplayer.send_move_vehicle (id, adj_pos, v)
+			local tsc_1 = math.round (tsc * 5000)
+			mcl_localplayer.send_move_vehicle (id, tsc_1, adj_pos, v)
 		end
 	else
 		self.default_switchtime = t
