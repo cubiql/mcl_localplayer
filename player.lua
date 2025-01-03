@@ -1139,6 +1139,13 @@ function mcl_localplayer.unlock_yaw ()
 	localplayer.yaw_locked = nil
 end
 
+function mcl_localplayer.handle_knockback (v)
+	if not localplayer.touching_ground then
+		v.y = 0
+	end
+	localplayer.localplayer:set_velocity (v)
+end
+
 function mcl_localplayer.init_player ()
 	core.localplayer:set_player_callbacks (localplayer)
 	localplayer.localplayer = core.localplayer
