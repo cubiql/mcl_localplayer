@@ -29,7 +29,7 @@ local mob_table = {
 	last_fall_y = nil,
 	safe_fall_distance = 3.0,
 	fall_damage_multiplier = 1.0,
-	water_friction = 0.6,
+	water_friction = 0.8,
 	water_velocity = 0.4,
 	depth_strider_level = 0,
 	_driver_eye_height = 0.0,
@@ -364,24 +364,13 @@ local AIR_DRAG			= 0.98
 local AIR_FRICTION		= 0.91
 local DOLPHIN_GRANTED_FRICTION	= 0.96
 local WATER_DRAG		= 0.8
-local AQUATIC_WATER_DRAG	= 0.9
-local AQUATIC_GRAVITY		= -0.1
-local SPRINTING_WATER_DRAG	= 0.9
-local JUMPING_LAVA_DRAG		= 0.8
 local LAVA_FRICTION		= 0.5
 local LAVA_SPEED		= 0.4
-local FLYING_LIQUID_SPEED	= 0.4
-local FLYING_GROUND_SPEED	= 2.0
-local FLYING_AIR_SPEED		= 0.4
 local BASE_SLIPPERY		= 0.98
 local BASE_FRICTION		= 0.6
 local LIQUID_FORCE		= 0.28
 local BASE_FRICTION3		= math.pow (0.6, 3)
-local FLYING_BASE_FRICTION3	= math.pow (BASE_FRICTION * AIR_FRICTION, 3)
-local LIQUID_JUMP_THRESHOLD	= 0.4
 local LIQUID_JUMP_FORCE		= 0.8
-local LIQUID_JUMP_FORCE_ONESHOT	= 6.0
-local LAVA_JUMP_THRESHOLD	= 0.1
 local ONE_TICK			= 0.05
 local TICK_TO_SEC		= 1 / ONE_TICK
 local LEVITATION_TRANSITION	= 0.2
@@ -613,7 +602,6 @@ function mob_table:motion_step (v, self_pos, moveresult, controls, params)
 		v.z = clamp (v.z, -3.0, 3.0)
 		if jumping or horiz_collision then
 			v.y = 4.0
-			jumping = false
 			self.jumping = false
 		end
 		self.reset_fall_damage = true
@@ -744,6 +732,15 @@ end
 
 function mob_table:on_step (dtime, moveresult, params)
 	if self._driving then
+		if not moveresult then
+			moveresult = {
+				touching_ground = false,
+				collides = false,
+				standing_on_object = false,
+				collisions = { },
+			}
+		end
+
 		local controls = core.localplayer:get_control ()
 		self.object:set_yaw (core.camera:get_look_horizontal ())
 		self:apply_driver_input (dtime, controls)
@@ -1011,7 +1008,207 @@ mcl_localplayer.register_mountable_mob ("mobs_mc:pig", pig)
 -- Mounting other vehicles (namely boats).
 ------------------------------------------------------------------------
 
--- TODO
+local boat = {
+	_last_sent_pos = nil,
+	_last_sent_vel = nil,
+	_last_sent_yaw = nil,
+	_yaw_acc = 0.0,
+	_is_mountable = true,
+	_is_mounted = false,
+	_default_switchtime = 0.0,
+	_tsc = 0.0,
+	_speed = 0.0,
+}
+
+local YAW_DRAG = 0.05
+local BOAT_DRAG = 0.45
+
+local BOAT_ANIMATION = {
+	x = 0,
+	y = 40,
+}
+
+local boat_y_offset = 0.35
+
+local function is_water (pos)
+	local node = core.get_node_or_nil (pos)
+	if node then
+		local def = mcl_localplayer.node_defs[node.name]
+		return def and def.groups.water
+	end
+	return false
+end
+
+local function is_ice (pos)
+	local node = core.get_node_or_nil (pos)
+	if node then
+		local def = mcl_localplayer.node_defs[node.name]
+		return def and def.groups.ice
+	end
+	return false
+end
+
+local function signbit (x)
+	return x < 0.0 and -1 or (x > 0.0 and 1 or 0.0)
+end
+
+function boat:drive (dtime, moveresult, params)
+	-- animations.
+	local ctrl = core.localplayer:get_control ()
+	local vel = self.object:get_velocity ()
+	local speed = math.sqrt (vel.x * vel.x + vel.z * vel.z)
+		* signbit (self._speed)
+	local p = math.pow (YAW_DRAG, dtime)
+	local scale = (1 - p) / (1 - YAW_DRAG)
+	local yaw = self.object:get_yaw ()
+	local delta = self._yaw_acc * scale
+	yaw = yaw + delta
+	mcl_localplayer.add_cam_offsets (delta, 0)
+	self.object:set_yaw (yaw)
+	mcl_localplayer.lock_yaw (yaw)
+	if ctrl.left then
+		self._yaw_acc = (self._yaw_acc * p) + (dtime * math.pi * 1.5)
+	elseif ctrl.right then
+		self._yaw_acc = (self._yaw_acc * p) - (dtime * math.pi * 1.5)
+	else
+		self._yaw_acc = (self._yaw_acc * p)
+		if math.abs (self._yaw_acc) < (math.pi / 60) then
+			self._yaw_acc = 0
+		end
+	end
+
+	-- Apply gravity and orient player.
+	local self_pos = self.object:get_pos ()
+	local test_pos = vector.copy (self_pos)
+	local on_water = is_water (test_pos)
+	test_pos.y = self_pos.y - boat_y_offset
+	if not on_water then
+		-- Free fall.
+		vel.y = vel.y - 9.81 * dtime
+	else
+		test_pos.y = test_pos.y + 1
+
+		if is_water (test_pos) then
+			-- Sink slowly while submerged.
+			vel.y = math.max (-0.2, vel.y - 0.2 * dtime)
+		else
+			-- Above water.
+			vel.y = 0.0
+		end
+	end
+	test_pos.y = self_pos.y - boat_y_offset - 0.1
+	local on_ice = is_ice (test_pos)
+	local acc = 5.0
+
+	if not on_ice and not on_water then
+		acc = 0.4
+	end
+
+	if ctrl.up then
+		speed = speed + acc * dtime
+	elseif ctrl.down then
+		speed = speed - acc * dtime
+	else
+		speed = speed * math.pow (BOAT_DRAG, dtime)
+		if math.abs (speed) < 0.1 and speed ~= 0.0 then
+			speed = 0.0
+			self.object:set_animation (BOAT_ANIMATION, 0.2, true)
+		end
+	end
+
+	local terminal_velocity = on_ice and 57.1
+		or (on_water and 8.0 or 0.7)
+	if speed > terminal_velocity then
+		speed = terminal_velocity
+	elseif speed < -terminal_velocity then
+		speed = -terminal_velocity
+	end
+
+	vel.z = math.cos (yaw) * speed
+	vel.x = -math.sin (yaw) * speed
+	self.object:set_velocity (vel)
+	self._speed = speed
+	self.object:set_animation_frame_speed (math.sqrt (speed) * 8)
+
+	local tsc = self._tsc + dtime
+	self._tsc = tsc
+
+	local t = self._default_switchtime + dtime
+	if t >= 0.10 then
+		t = t % 0.10
+		local id = self.object:get_id ()
+		local pos = self.object:get_pos ()
+		local tsc_1 = math.round (tsc * 5000)
+		if not self._last_sent_pos
+			or not self._last_sent_vel
+			or not vector.equals (self._last_sent_pos, pos)
+			or not vector.equals (self._last_sent_vel, vel) then
+			mcl_localplayer.send_move_vehicle (id, tsc_1, pos, vel)
+			self._last_sent_pos = pos
+			self._last_sent_vel = vel
+		end
+		if self._last_sent_yaw ~= yaw then
+			mcl_localplayer.send_turn_vehicle (id, tsc_1, yaw)
+			self._last_sent_yaw = yaw
+		end
+	end
+	self._default_switchtime = t
+end
+
+function boat:import_vehicle_capabilities (caps)
+end
+
+function boat:import_position (pos, vel)
+	if not vector.equals (pos, PLACEHOLDER_VECTOR) then
+		self.object:set_pos (pos)
+	end
+	if not vector.equals (vel, PLACEHOLDER_VECTOR) then
+		self.object:set_velocity (vel)
+	end
+end
+
+local BOAT_ANIMATION = {
+	x = 0,
+	y = 40,
+}
+
+function boat:init_mount ()
+	self.object:set_animation (BOAT_ANIMATION, 0.2, true)
+	self._last_sent_pos = nil
+	self._last_sent_vel = nil
+	self._last_sent_yaw = nil
+	self._yaw_acc = 0.0
+	self.speed = 0.0
+	mcl_localplayer.lock_yaw (self.object:get_yaw ())
+
+	local self_pos = self.object:get_pos ()
+	self.object:set_velocity (ZERO_VECTOR)
+	self.object:set_pos (self_pos)
+end
+
+function boat:dismount ()
+	self.object:set_animation_frame_speed (nil)
+	self.object:set_animation (nil)
+	self.object:set_velocity (nil)
+	self.object:set_pos (nil)
+	self.object:set_rotation (nil)
+	mcl_localplayer.unlock_yaw ()
+end
+
+function boat:on_step (dtime, moveresult, params)
+	if self._is_mounted then
+		self:drive (dtime, moveresult, params)
+	end
+end
+
+function boat:on_deactivate ()
+	if self._is_mounted then
+		mcl_localplayer.unlock_yaw ()
+	end
+end
+
+core.register_entity ("mcl_boats:boat", boat)
+core.register_entity ("mcl_boats:chest_boat", boat)
 
 ------------------------------------------------------------------------
 -- Object mounting protocol.

@@ -30,6 +30,7 @@ local SERVERBOUND_ACKNOWLEDGE_VEHICLE = 'aj'
 local SERVERBOUND_REFUSE_VEHICLE = 'ak'
 local SERVERBOUND_MOVE_VEHICLE = 'al'
 local SERVERBOUND_CONFIGURE_VEHICLE = 'am'
+local SERVERBOUND_TURN_VEHICLE = 'an'
 
 -- Clientbound messages.
 local CLIENTBOUND_HELLO = 'AA'
@@ -112,13 +113,15 @@ function mcl_localplayer.send_move_vehicle (id, tsc, pos, vel)
 	mcl_localplayer.send (payload)
 end
 
-function mcl_localplayer.send_dismount_vehicle (id)
-	mcl_localplayer.send (SERVERBOUND_DISMOUNT_VEHICLE .. id)
-end
-
 function mcl_localplayer.send_configure_vehicle (config)
 	local props = core.write_json (config)
 	mcl_localplayer.send (SERVERBOUND_CONFIGURE_VEHICLE .. props)
+end
+
+function mcl_localplayer.send_turn_vehicle (id, tsc, yaw)
+	local payload = SERVERBOUND_TURN_VEHICLE
+		.. id .. "," .. tsc .. "," .. yaw
+	mcl_localplayer.send (payload)
 end
 
 ------------------------------------------------------------------------

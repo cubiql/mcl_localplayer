@@ -26,7 +26,7 @@ local localplayer = {
 	touching_ground = false,
 	_was_touching_ground = false,
 	_sprinting = false,
-	water_friction = 0.6,
+	water_friction = 0.8,
 	water_velocity = 0.4,
 	depth_strider_level = 0,
 	_previously_floating = false,
@@ -67,6 +67,9 @@ local localplayer = {
 	blocking = 0,
 	ground_standon = nil,
 	mount = nil,
+	yaw_offset = 0.0,
+	pitch_offset = 0.0,
+	yaw_locked = false,
 }
 mcl_localplayer.localplayer = localplayer
 
@@ -74,24 +77,14 @@ local AIR_DRAG			= 0.98
 local AIR_FRICTION		= 0.91
 local DOLPHIN_GRANTED_FRICTION	= 0.96
 local WATER_DRAG		= 0.8
-local AQUATIC_WATER_DRAG	= 0.9
-local AQUATIC_GRAVITY		= -0.1
 local SPRINTING_WATER_DRAG	= 0.9
-local JUMPING_LAVA_DRAG		= 0.8
 local LAVA_FRICTION		= 0.5
 local LAVA_SPEED		= 0.4
-local FLYING_LIQUID_SPEED	= 0.4
-local FLYING_GROUND_SPEED	= 2.0
-local FLYING_AIR_SPEED		= 0.4
 local BASE_SLIPPERY		= 0.98
 local BASE_FRICTION		= 0.6
 local LIQUID_FORCE		= 0.28
 local BASE_FRICTION3		= math.pow (0.6, 3)
-local FLYING_BASE_FRICTION3	= math.pow (BASE_FRICTION * AIR_FRICTION, 3)
-local LIQUID_JUMP_THRESHOLD	= 0.4
 local LIQUID_JUMP_FORCE		= 0.8
-local LIQUID_JUMP_FORCE_ONESHOT	= 6.0
-local LAVA_JUMP_THRESHOLD	= 0.1
 local ONE_TICK			= 0.05
 local TICK_TO_SEC		= 1 / ONE_TICK
 local WATER_DESCENT		= -0.8
@@ -588,7 +581,6 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		v.z = clamp (v.z, -3.0, 3.0)
 		if jumping or horiz_collision then
 			v.y = 4.0
-			jumping = false
 			self.jumping = false
 		end
 		self.reset_fall_damage = true
@@ -705,7 +697,6 @@ function localplayer:collision_angle ()
 end
 
 local EIGHT_DEG = math.rad (8)
-local ZERO_VECTOR = vector.zero ()
 
 function localplayer:send_movement_state ()
 	local state = self.server_movement_state
@@ -820,6 +811,11 @@ end
 core.register_on_teleport_localplayer (function (new_pos)
 	localplayer.fall_distance = 0
 	localplayer.last_fall_y = nil
+
+	-- Minetest specifies yaw and pitch alongside position whilst
+	-- teleporting players.
+	localplayer.yaw_offset = 0
+	localplayer.pitch_offset = 0
 	if mcl_localplayer.debug then
 		print ("Teleported to: " .. new_pos:to_string ())
 	end
@@ -886,6 +882,19 @@ function localplayer:check_fall_damage (self_pos, touching_ground, params)
 	self.reset_fall_damage = false
 end
 
+local function norm_radians (x)
+	local x = x % (math.pi * 2)
+	if x >= math.pi then
+		x = x - math.pi * 2
+	end
+	if x < -math.pi then
+		x = x + math.pi * 2
+	end
+	return x
+end
+
+mcl_localplayer.norm_radians = norm_radians
+
 function localplayer.on_step (dtime, moveresult, params)
 	local player = core.localplayer
 	local self = localplayer
@@ -902,9 +911,25 @@ function localplayer.on_step (dtime, moveresult, params)
 	end
 
 	-- Set camera yaw and pitch.
-	core.camera:set_look_horizontal (control.yaw)
-	core.camera:set_look_vertical (control.pitch)
-	local yaw = core.camera:get_look_horizontal ()
+	local cam_yaw = control.yaw + self.yaw_offset
+	local cam_pitch = control.pitch + self.pitch_offset
+
+	-- Apply yaw lock if necessary.
+	if self.yaw_locked then
+		local dist = norm_radians (cam_yaw) - self.yaw_locked
+		local norm = norm_radians (dist)
+		local diff = 0.0
+		if norm > math.pi / 2 then
+			diff = math.pi / 2 - norm
+		elseif norm < -math.pi / 2 then
+			diff = -math.pi / 2 - norm
+		end
+		self.yaw_offset	= self.yaw_offset + diff
+		cam_yaw = cam_yaw + diff
+	end
+
+	core.camera:set_look_horizontal (cam_yaw)
+	core.camera:set_look_vertical (cam_pitch)
 
 	-- Am I mounted?
 	local mount = self.object:get_attach ()
@@ -1095,6 +1120,23 @@ function localplayer.on_step (dtime, moveresult, params)
 		self.default_switchtime = t
 	end
 	self._was_jumping = control.jump
+end
+
+function mcl_localplayer.add_cam_offsets (y, x)
+	if y ~= 0 or x ~= 0 then
+		local yaw = localplayer.yaw_offset + y
+		local pitch = localplayer.pitch_offset + x
+		localplayer.yaw_offset = yaw
+		localplayer.pitch_offset = pitch
+	end
+end
+
+function mcl_localplayer.lock_yaw (cam_yaw)
+	localplayer.yaw_locked = norm_radians (cam_yaw)
+end
+
+function mcl_localplayer.unlock_yaw ()
+	localplayer.yaw_locked = nil
 end
 
 function mcl_localplayer.init_player ()
@@ -1320,24 +1362,11 @@ function localplayer:desired_animation (controls, v)
 	end
 end
 
-local function norm_radians (x)
-	local x = x % (math.pi * 2)
-	if x >= math.pi then
-		x = x - math.pi * 2
-	end
-	if x < -math.pi then
-		x = x + math.pi * 2
-	end
-	return x
-end
-
 local FOURTY_DEG = math.rad (40)
 local TWENTY_DEG = math.rad (20)
 local SEVENTY_FIVE_DEG = math.rad (75)
 local FIFTY_DEG = math.rad (50)
 local ONE_HUNDRED_AND_TEN_DEG = math.rad (110)
-local THIRTY_DEG = math.deg (30)
-local FOURTY_THREE_DEG = math.rad (43)
 
 local function dir_to_pitch (dir)
 	local xz = math.abs (dir.x) + math.abs (dir.z)
@@ -1417,7 +1446,6 @@ function localplayer:tick_animation (controls, dtime)
 		self._last_move_yaw = move_yaw
 		return
 	elseif self.pose == POSE_FALL_FLYING then
-		local pitch = -core.camera:get_look_vertical ()
 		local move_pitch = dir_to_pitch (v)
 		local xrot = move_pitch + FIFTY_DEG
 		local yrot = move_yaw - look_dir
@@ -1491,7 +1519,7 @@ function localplayer:tick_animation (controls, dtime)
 					LEFT_ARM_BLOCKING_OVERRIDE)
 	elseif mcl_localplayer.is_using_bow_visually () then
 		local pitch = math.deg (core.camera:get_look_vertical ())
-		local right_arm_rot = vector.new(pitch + 90, -30, pitch * -1 * .35):apply (math.rad)
+		local right_arm_rot = vector.new (pitch + 90, -30, pitch * -1 * .35):apply (math.rad)
 		local left_arm_rot = vector.new (pitch + 90, 43, pitch * 0.35):apply (math.rad)
 		self.object:set_bone_override ("Arm_Right_Pitch_Control", {
 			rotation = {
