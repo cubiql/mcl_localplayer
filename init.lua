@@ -1,5 +1,5 @@
 mcl_localplayer = {
-	debug = false,
+	debug = true,
 }
 local modname = core.get_current_modname ()
 print ("*** Loading Mineclonia CSM")
@@ -47,6 +47,7 @@ local CLIENTBOUND_VEHICLE_HANDOFF = 'AL'
 local CLIENTBOUND_VEHICLE_POSITION = 'AM'
 local CLIENTBOUND_RESCIND_VEHICLE = 'AN'
 local CLIENTBOUND_VEHICLE_CAPABILITIES = 'AO'
+local CLIENTBOUND_KNOCKBACK = 'AP'
 
 -- Payload parameters.
 local MAX_PAYLOAD = 65533
@@ -311,6 +312,19 @@ local function receive_modchannel_message (channel_name, sender, message)
 					error ("Invalid ClientboundVehicleCapabilities message")
 				end
 				mcl_localplayer.handle_vehicle_capabilities (json.id, json)
+			elseif msgtype == CLIENTBOUND_KNOCKBACK then
+				local x, y, z = unpack (payload:split (','))
+				if not x or not y or not z then
+					error ("Invalid ClientboundKnockback message: " .. payload)
+				end
+				x = tonumber (x)
+				y = tonumber (y)
+				z = tonumber (z)
+				if not x or not y or not z then
+					error ("Invalid ClientboundKnockback message: " .. payload)
+				end
+				local v = vector.new (x, y, z)
+				mcl_localplayer.handle_knockback (v)
 			end
 		end
 	end

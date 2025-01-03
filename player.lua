@@ -1,7 +1,7 @@
 ------------------------------------------------------------------------
 -- Player physics and input.
 --
--- TODO: knockback, jump bonuses, collision detection
+-- TODO: collision detection
 ------------------------------------------------------------------------
 
 local POSE_STANDING = 1
