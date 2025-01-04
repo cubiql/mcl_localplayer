@@ -130,7 +130,7 @@ function mcl_localplayer.item_globalstep (dtime)
 			end
 		end
 	end
-	mcl_localplayer.check_spyglass (controls)
+	mcl_localplayer.check_spyglass ()
 end
 
 function mcl_localplayer.do_ammoctrl (ammo, challenge)

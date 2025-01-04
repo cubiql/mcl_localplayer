@@ -1,5 +1,5 @@
 mcl_localplayer = {
-	debug = true,
+	debug = false,
 }
 local modname = core.get_current_modname ()
 print ("*** Loading Mineclonia CSM")

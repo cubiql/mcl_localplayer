@@ -815,6 +815,7 @@ function mob_table:dismount ()
 	self:stop_driving ()
 	local p = mcl_localplayer.localplayer
 	p:remove_physics_factor ("target_eye_height", DRIVER_EYE_HEIGHT_FACTOR)
+	mcl_localplayer.set_mount_pose (mcl_localplayer.POSE_MOUNTED)
 end
 
 function mob_table:init_mount ()
@@ -825,6 +826,7 @@ function mob_table:init_mount ()
 	local p = mcl_localplayer.localplayer
 	p:add_physics_factor ("target_eye_height", DRIVER_EYE_HEIGHT_FACTOR,
 			self._driver_eye_height, "add")
+	mcl_localplayer.set_mount_pose (mcl_localplayer.POSE_SIT_MOUNTED)
 end
 
 local PLACEHOLDER_VECTOR = vector.new (1.0e+6, 1.0e+6, 1.0e+6)
@@ -1009,6 +1011,7 @@ mcl_localplayer.register_mountable_mob ("mobs_mc:pig", pig)
 ------------------------------------------------------------------------
 
 local boat = {
+	_is_boat = true,
 	_last_sent_pos = nil,
 	_last_sent_vel = nil,
 	_last_sent_yaw = nil,
@@ -1018,6 +1021,7 @@ local boat = {
 	_default_switchtime = 0.0,
 	_tsc = 0.0,
 	_speed = 0.0,
+	_next_yaw = 0.0,
 }
 
 local YAW_DRAG = 0.05
@@ -1052,26 +1056,47 @@ local function signbit (x)
 	return x < 0.0 and -1 or (x > 0.0 and 1 or 0.0)
 end
 
+-- Forward declaration.
+local previous_mount = nil
+
+function mcl_localplayer.orient_camera_on_boat (dtime)
+	local mount = previous_mount
+	if mount then
+		local entity = mount:get_luaentity ()
+		if entity._is_boat then
+			entity:turn_camera (dtime)
+		end
+	end
+end
+
+function boat:turn_camera (dtime)
+	local p = math.pow (YAW_DRAG, dtime)
+	local scale = (1 - p) / (1 - YAW_DRAG)
+	local yaw = self._next_yaw
+	local delta = self._yaw_acc * scale
+	mcl_localplayer.add_cam_offsets (delta, 0)
+	mcl_localplayer.lock_yaw (yaw + delta)
+	self._next_yaw = yaw + delta
+	self._yaw_acc = self._yaw_acc * p
+end
+
 function boat:drive (dtime, moveresult, params)
-	-- animations.
 	local ctrl = core.localplayer:get_control ()
 	local vel = self.object:get_velocity ()
 	local speed = math.sqrt (vel.x * vel.x + vel.z * vel.z)
 		* signbit (self._speed)
-	local p = math.pow (YAW_DRAG, dtime)
-	local scale = (1 - p) / (1 - YAW_DRAG)
-	local yaw = self.object:get_yaw ()
-	local delta = self._yaw_acc * scale
-	yaw = yaw + delta
-	mcl_localplayer.add_cam_offsets (delta, 0)
+	local yaw = self._next_yaw
+	-- The camera yaw is adjusted before this mob is ridden, as
+	-- object on_step functions are called after the LocalPlayer's
+	-- and adjusting the camera's orientation here would produce a
+	-- one frame delay.
 	self.object:set_yaw (yaw)
-	mcl_localplayer.lock_yaw (yaw)
 	if ctrl.left then
-		self._yaw_acc = (self._yaw_acc * p) + (dtime * math.pi * 1.5)
+		self._yaw_acc = self._yaw_acc + (dtime * math.pi * 1.5)
 	elseif ctrl.right then
-		self._yaw_acc = (self._yaw_acc * p) - (dtime * math.pi * 1.5)
+		self._yaw_acc = self._yaw_acc - (dtime * math.pi * 1.5)
 	else
-		self._yaw_acc = (self._yaw_acc * p)
+		self._yaw_acc = self._yaw_acc
 		if math.abs (self._yaw_acc) < (math.pi / 60) then
 			self._yaw_acc = 0
 		end
@@ -1128,7 +1153,8 @@ function boat:drive (dtime, moveresult, params)
 	vel.x = -math.sin (yaw) * speed
 	self.object:set_velocity (vel)
 	self._speed = speed
-	self.object:set_animation_frame_speed (math.sqrt (speed) * 8)
+	local f = math.sqrt (math.abs (speed))
+	self.object:set_animation_frame_speed (f * 8)
 
 	local tsc = self._tsc + dtime
 	self._tsc = tsc
@@ -1179,11 +1205,13 @@ function boat:init_mount ()
 	self._last_sent_yaw = nil
 	self._yaw_acc = 0.0
 	self.speed = 0.0
-	mcl_localplayer.lock_yaw (self.object:get_yaw ())
+	self._next_yaw = self.object:get_yaw ()
+	mcl_localplayer.lock_yaw (self._next_yaw)
 
 	local self_pos = self.object:get_pos ()
 	self.object:set_velocity (ZERO_VECTOR)
 	self.object:set_pos (self_pos)
+	mcl_localplayer.set_mount_pose (mcl_localplayer.POSE_MOUNTED)
 end
 
 function boat:dismount ()
@@ -1193,6 +1221,7 @@ function boat:dismount ()
 	self.object:set_pos (nil)
 	self.object:set_rotation (nil)
 	mcl_localplayer.unlock_yaw ()
+	mcl_localplayer.set_mount_pose (mcl_localplayer.POSE_MOUNTED)
 end
 
 function boat:on_step (dtime, moveresult, params)
@@ -1216,7 +1245,6 @@ core.register_entity ("mcl_boats:chest_boat", boat)
 
 local pending_handoff = nil
 local pending_vehicle_capabilities = nil
-local previous_mount = nil
 
 function mcl_localplayer.update_mounting (mount)
 	if not mount then

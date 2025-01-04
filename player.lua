@@ -9,8 +9,17 @@ local POSE_CROUCHING = 2
 local POSE_SLEEPING = 3
 local POSE_FALL_FLYING = 4
 local POSE_SWIMMING = 5
-local POSE_MOUNTED = 6
-local POSE_DEATH = 7
+local POSE_SIT_MOUNTED = 6
+local POSE_MOUNTED = 7
+local POSE_DEATH = 8
+
+mcl_localplayer.POSE_STANDING = POSE_STANDING
+mcl_localplayer.POSE_CROUCHING = POSE_CROUCHING
+mcl_localplayer.POSE_FALL_FLYING = POSE_FALL_FLYING
+mcl_localplayer.POSE_SWIMMING = POSE_SWIMMING
+mcl_localplayer.POSE_SIT_MOUNTED = POSE_SIT_MOUNTED
+mcl_localplayer.POSE_MOUNTED = POSE_MOUNTED
+mcl_localplayer.POSE_DEATH = POSE_DEATH
 
 local STANDARD_FOV_FACTOR = 1.0
 
@@ -70,6 +79,7 @@ local localplayer = {
 	yaw_offset = 0.0,
 	pitch_offset = 0.0,
 	yaw_locked = false,
+	mount_pose = POSE_MOUNTED,
 }
 mcl_localplayer.localplayer = localplayer
 
@@ -916,6 +926,7 @@ function localplayer.on_step (dtime, moveresult, params)
 
 	-- Apply yaw lock if necessary.
 	if self.yaw_locked then
+		mcl_localplayer.orient_camera_on_boat (dtime)
 		local dist = norm_radians (cam_yaw) - self.yaw_locked
 		local norm = norm_radians (dist)
 		local diff = 0.0
@@ -940,7 +951,7 @@ function localplayer.on_step (dtime, moveresult, params)
 		self.localplayer:set_touching_ground (nil)
 
 		-- Configure a suitable pose.
-		local pose = POSE_MOUNTED
+		local pose = self.mount_pose
 		if pose ~= self.pose then
 			self:apply_pose (pose)
 		end
@@ -1170,13 +1181,7 @@ end
 --	},
 -- }
 --
--- These poses must currently be present in the table:
---  POSE_STANDING
---  POSE_CROUCHING = 1
---  POSE_SLEEPING = 2
---  POSE_FALL_FLYING = 3
---  POSE_SWIMMING = 4
---  POSE_DEATH = 4
+-- All defined poses are expected to be in such a table.
 
 local function validate_pose_table (pose)
 	if type (pose.stand) ~= "table"
@@ -1254,6 +1259,9 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 		end
 		if not data.pose_defs[POSE_MOUNTED] then
 			error ("Server did not define POSE_MOUNTED")
+		end
+		if not data.pose_defs[POSE_SIT_MOUNTED] then
+			error ("Server did not define POSE_SIT_MOUNTED")
 		end
 		mcl_localplayer.pose_defs = data.pose_defs
 		localplayer:apply_pose (localplayer.pose)
@@ -1394,6 +1402,13 @@ local LEFT_ARM_BLOCKING_OVERRIDE = {
 	},
 }
 
+local ZERO_OVERRIDE = {
+	rotation = {
+		vec = vector.zero (),
+		absolute = true,
+	},
+}
+
 local DEFAULT_FOV = 86.1
 
 function localplayer:tick_animation (controls, dtime)
@@ -1472,12 +1487,7 @@ function localplayer:tick_animation (controls, dtime)
 		return
 	elseif self.pose == POSE_SLEEPING then
 		self.object:set_bone_override ("Head_Control", {})
-		self.object:set_bone_override ("Body_Control", {
-			rotation = {
-				vec = vector.new (0, 0, 0),
-				absolute = true,
-			},
-		})
+		self.object:set_bone_override ("Body_Control", ZERO_OVERRIDE)
 		return
 	elseif self.pose == POSE_DEATH then
 		self.object:set_bone_override ("Head_Control", {})
@@ -1489,42 +1499,55 @@ function localplayer:tick_animation (controls, dtime)
 	local look_dir_new = norm_radians (look_dir)
 	local diff = norm_radians (move_yaw_lim - look_dir_new)
 
-	if self.pose == POSE_MOUNTED then
+	if self.pose == self.mount_pose then
 		local attach = self.object:get_attach ()
 		if attach then
-			look_dir_new = 0.0
-			move_yaw_lim = 0.0
-			diff = 0.0
+			local yaw = attach:get_yaw ()
+			local yrot = -norm_radians (look_dir - norm_radians (yaw))
+			local pitch = core.camera:get_look_vertical ()
+			self.object:set_bone_override ("Body_Control", ZERO_OVERRIDE)
+			self.object:set_bone_override ("Head_Control", {
+				rotation = {
+					vec = vector.new (pitch, yrot, 0),
+					absolute = true,
+				},
+			})
 		end
+	else
+		if diff > FOURTY_DEG then
+			move_yaw_lim = look_dir_new + FOURTY_DEG
+		elseif diff < -FOURTY_DEG then
+			move_yaw_lim = look_dir_new - FOURTY_DEG
+		end
+		self._last_move_yaw = move_yaw_lim
+		local body = look_dir_new - move_yaw_lim
+		local rot = vector.new (0, body, 0)
+		self.object:set_bone_override ("Body_Control", {
+			rotation = { vec = rot, absolute = true, },
+		})
+		rot.y = move_yaw_lim - look_dir_new
+		rot.x = core.camera:get_look_vertical ()
+		self.object:set_bone_override ("Head_Control", {
+			rotation = { vec = rot, absolute = true, },
+		})
 	end
-
-	if diff > FOURTY_DEG then
-		move_yaw_lim = look_dir_new + FOURTY_DEG
-	elseif diff < -FOURTY_DEG then
-		move_yaw_lim = look_dir_new - FOURTY_DEG
-	end
-	self._last_move_yaw = move_yaw_lim
-	local body = look_dir_new - move_yaw_lim
-	local rot = vector.new (0, body, 0)
-	self.object:set_bone_override ("Body_Control", {
-		rotation = { vec = rot, absolute = true, },
-	})
-	rot.y = move_yaw_lim - look_dir_new
-	rot.x = core.camera:get_look_vertical ()
-	self.object:set_bone_override ("Head_Control", {
-		rotation = { vec = rot, absolute = true, },
-	})
 
 	-- Control arm rotation whilst blocking.
 	if self.blocking == 2 then
+		self.object:set_bone_override ("Arm_Right", ZERO_OVERRIDE)
+		self.object:set_bone_override ("Arm_Left", nil)
 		self.object:set_bone_override ("Arm_Right_Pitch_Control",
 					RIGHT_ARM_BLOCKING_OVERRIDE)
 		self.object:set_bone_override ("Arm_Left_Pitch_Control", nil)
 	elseif self.blocking == 1 then
+		self.object:set_bone_override ("Arm_Right", nil)
+		self.object:set_bone_override ("Arm_Left", ZERO_OVERRIDE)
 		self.object:set_bone_override ("Arm_Right_Pitch_Control", nil)
 		self.object:set_bone_override ("Arm_Left_Pitch_Control",
 					LEFT_ARM_BLOCKING_OVERRIDE)
 	elseif mcl_localplayer.is_using_bow_visually () then
+		self.object:set_bone_override ("Arm_Right", ZERO_OVERRIDE)
+		self.object:set_bone_override ("Arm_Left", ZERO_OVERRIDE)
 		local pitch = math.deg (core.camera:get_look_vertical ())
 		local right_arm_rot = vector.new (pitch + 90, -30, pitch * -1 * .35):apply (math.rad)
 		local left_arm_rot = vector.new (pitch + 90, 43, pitch * 0.35):apply (math.rad)
@@ -1541,6 +1564,8 @@ function localplayer:tick_animation (controls, dtime)
 			},
 		})
 	else
+		self.object:set_bone_override ("Arm_Right", nil)
+		self.object:set_bone_override ("Arm_Left", nil)
 		self.object:set_bone_override ("Arm_Right_Pitch_Control", nil)
 		self.object:set_bone_override ("Arm_Left_Pitch_Control", nil)
 	end
@@ -1554,6 +1579,10 @@ end
 
 function mcl_localplayer.do_shieldctrl (ctrlword)
 	localplayer.blocking = ctrlword
+end
+
+function mcl_localplayer.set_mount_pose (poseid)
+	localplayer.mount_pose = poseid
 end
 
 ------------------------------------------------------------------------
@@ -1754,3 +1783,4 @@ end
 function mcl_localplayer.is_creative_enabled ()
 	return localplayer.gamemode == "creative"
 end
+
