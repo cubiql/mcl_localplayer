@@ -8,7 +8,7 @@ print ("*** Loading Mineclonia CSM")
 -- Profiler.
 ------------------------------------------------------------------------
 
-local profiling_enabled = false
+local profiling_enabled = true
 
 if profiling_enabled then
 
@@ -79,26 +79,30 @@ local function compare_total (a, b)
 	return a.total > b.total
 end
 
-local function print_record (tbl, level)
-	print (string.format ("%-46s %15.2f %15.2f",
+local function print_record (tbl, total, parent, level)
+	print (string.format ("%-46s %15.2f %15.2f %6.2f%%  %6.2f%% %6.2f%% %6.2f%%",
 			string.rep ('-', level * 2) .. tbl.name,
 			tbl.direct * 1000 * 1000,
-			tbl.total * 1000 * 1000))
+			tbl.total * 1000 * 1000,
+			(tbl.direct / total) * 100,
+			(tbl.direct / parent) * 100,
+			(tbl.total / total) * 100,
+			(tbl.total / parent) * 100))
 	local keys = {}
 	for _, rec in pairs (tbl.referents) do
 		table.insert (keys, rec)
 	end
 	table.sort (keys, compare_total)
 	for _, rec in ipairs (keys) do
-		print_record (rec, level + 1)
+		print_record (rec, total, tbl.total, level + 1)
 	end
 end
 
 local function flush_tables (dtime)
 	-- Begin printing records.
 	print (string.format ("After %.2f seconds of activity: ", dtime))
-	print ("                                                   DIRECT (us)      TOTAL (us)")
-	print_record (root, 0)
+	print ("                                                   DIRECT (us)      TOTAL (us)  %TOTAL  %PARENT  %TOTAL %PARENT")
+	print_record (root, root.total, root.total, 0)
 
 	-- Reset root.
 	root.referents = {}
