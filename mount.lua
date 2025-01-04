@@ -388,13 +388,13 @@ function mob_table:motion_step (v, self_pos, moveresult, controls, params)
 	local acc_dir = self.acc_dir
 	local acc_speed = self.acc_speed
 	local last_standon = self._last_standon
-		and core.get_node_def (self._last_standon.name)
+		and mcl_localplayer.node_defs[self._last_standon.name]
 		or EMPTY_NODE
 	local standin = self.standin
-		and core.get_node_def (self.standin.name)
+		and mcl_localplayer.node_defs[self.standin.name]
 		or EMPTY_NODE
 	local standon = self.standon
-		and core.get_node_def (self.standon.name)
+		and mcl_localplayer.node_defs[self.standon.name]
 		or EMPTY_NODE
 	local gravity = self.gravity
 	local touching_ground = self.touching_ground
@@ -415,10 +415,9 @@ function mob_table:motion_step (v, self_pos, moveresult, controls, params)
 
 	local velocity_factor = 1.0
 	local liquidtype = self._last_liquidtype
-	local server_def = mcl_localplayer.node_defs[standon.name]
 
-	if server_def and server_def._mcl_velocity_factor then
-		velocity_factor = server_def._mcl_velocity_factor
+	if standon and standon._mcl_velocity_factor then
+		velocity_factor = standon._mcl_velocity_factor
 	end
 	self.jump_timer = self.jump_timer - 1
 

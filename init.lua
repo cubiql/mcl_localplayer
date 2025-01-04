@@ -8,7 +8,7 @@ print ("*** Loading Mineclonia CSM")
 -- Profiler.
 ------------------------------------------------------------------------
 
-local profiling_enabled = true
+local profiling_enabled = false
 
 if profiling_enabled then
 
@@ -21,7 +21,6 @@ local root = {
 }
 
 function mcl_localplayer.profile (name)
-	local clock = os.clock ()
 	local count = #eventpdl
 	local tbl
 
@@ -35,12 +34,12 @@ function mcl_localplayer.profile (name)
 			referents = {},
 		}
 	end
-	tbl.start = clock
 
 	eventpdl[count + 1] = tbl
 	if count > 0 then
 		eventpdl[count].referents[name] = tbl
 	end
+	tbl.start = os.clock ()
 end
 
 function mcl_localplayer.profile_done (name)

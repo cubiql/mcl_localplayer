@@ -80,6 +80,7 @@ local localplayer = {
 	pitch_offset = 0.0,
 	yaw_locked = false,
 	mount_pose = POSE_MOUNTED,
+	_bone_overrides = {},
 }
 mcl_localplayer.localplayer = localplayer
 
@@ -320,16 +321,20 @@ end
 
 function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	mcl_localplayer.profile ("LocalPlayer motion_step")
+	mcl_localplayer.profile ("LocalPlayer motion_step prologue")
 	local acc_dir = self.acc_dir
 	local acc_speed = self.movement_speed
+	-- core.get_node_def is REALLY expensive because it
+	-- reconstructing node definitions every time.  Avoid it like
+	-- the plague.
 	local last_standon = self._last_standon
-		and core.get_node_def (self._last_standon.name)
+		and mcl_localplayer.node_defs[self._last_standon.name]
 		or EMPTY_NODE
 	local standin = self.standin
-		and core.get_node_def (self.standin.name)
+		and mcl_localplayer.node_defs[self.standin.name]
 		or EMPTY_NODE
 	local standon = self.standon
-		and core.get_node_def (self.standon.name)
+		and mcl_localplayer.node_defs[self.standon.name]
 		or EMPTY_NODE
 	local gravity = self.gravity
 	local touching_ground = not params.flying and self.touching_ground
@@ -353,10 +358,9 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 
 	local velocity_factor = 1.0
 	local liquidtype = self._last_liquidtype
-	local server_def = mcl_localplayer.node_defs[standon.name]
 
-	if server_def and server_def._mcl_velocity_factor then
-		velocity_factor = server_def._mcl_velocity_factor
+	if standon and standon._mcl_velocity_factor then
+		velocity_factor = standon._mcl_velocity_factor
 	end
 	self.jump_timer = self.jump_timer - 1
 
@@ -370,8 +374,10 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		local dir = core.camera:get_look_dir ()
 		self:rocket_boost (dir, v)
 	end
+	mcl_localplayer.profile_done ("LocalPlayer motion_step prologue")
 
 	if liquidtype == "water" then
+		mcl_localplayer.profile ("LocalPlayer water movement")
 		local water_vec = self:check_water_flow (self_pos)
 		local water_friction = self.water_friction
 		if self._sprinting then
@@ -443,7 +449,9 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 				v.y = 6.0
 			end
 		end
+		mcl_localplayer.profile_done ("LocalPlayer water movement")
 	elseif liquidtype == "lava" then
+		mcl_localplayer.profile ("LocalPlayer lava movement")
 		local speed = LAVA_SPEED
 		local r = LAVA_FRICTION
 		local fv_x, fv_y, fv_z
@@ -469,7 +477,9 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 				v.y = 6.0
 			end
 		end
+		mcl_localplayer.profile_done ("LocalPlayer lava movement")
 	elseif self.fall_flying then
+		mcl_localplayer.profile ("LocalPlayer fall flying")
 		-- Limit fall_distance to 1.0 if vertical velocity is
 		-- less than -0.5 n/tick.
 		if v.y > -10.0 and self.fall_distance > 1.0 then
@@ -510,7 +520,9 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		v.x = v.x * FALL_FLYING_DRAG_HORIZ
 		v.z = v.z * FALL_FLYING_DRAG_HORIZ
 		v.y = v.y * AIR_DRAG
+		mcl_localplayer.profile_done ("LocalPlayer fall flying")
 	else
+		mcl_localplayer.profile ("LocalPlayer movement")
 		-- If not standing on air, apply slippery to a base value of
 		-- 0.6.
 		local slippery = last_standon.groups.slippery
@@ -573,8 +585,10 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 			v.y = v.y + fv_y
 			self.reset_fall_damage = true
 		end
+		mcl_localplayer.profile_done ("LocalPlayer movement")
 	end
 
+	mcl_localplayer.profile ("LocalPlayer motion_step epilogue")
 	if jumping then
 		if liquidtype then
 			v.y = v.y + LIQUID_JUMP_FORCE
@@ -619,6 +633,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	if v.z > -MIN_VELOCITY and v.z < MIN_VELOCITY then
 		v.z = 0
 	end
+	mcl_localplayer.profile_done ("LocalPlayer motion_step epilogue")
 	mcl_localplayer.profile_done ("LocalPlayer motion_step")
 	return v
 end
@@ -1330,9 +1345,12 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 end
 
 function localplayer:pose_collides (self_pos, pose)
+	mcl_localplayer.profile ("LocalPlayer pose_collides")
 	local def = mcl_localplayer.pose_defs[pose]
-	return def and core.collides (def.collisionbox, self_pos,
+	local rc = def and core.collides (def.collisionbox, self_pos,
 					true, self.object, true)
+	mcl_localplayer.profile_done ("LocalPlayer pose_collides")
+	return rc
 end
 
 function localplayer:collides (self_pos, off_x, off_y, off_z, reject_grazing)
@@ -1362,8 +1380,7 @@ function localplayer:desired_pose (self_pos, controls, params)
 	if not pose_def or (params.flying and params.noclip) then
 		return pose
 	else
-		if core.collides (pose_def.collisionbox, self_pos,
-					true, self.object, true) then
+		if self:pose_collides (self_pos, pose) then
 			if not self:pose_collides (self_pos, POSE_CROUCHING) then
 				return POSE_CROUCHING
 			elseif not self:pose_collides (self_pos, POSE_SWIMMING) then
@@ -1419,21 +1436,10 @@ local function dir_to_pitch (dir)
 	return -math.atan2 (-dir.y, xz)
 end
 
-local RIGHT_ARM_BLOCKING_OVERRIDE = {
-	rotation = {
-		vec = vector.new (20, -20, 0):apply (math.rad),
-		absolute = true,
-	},
-}
+local RIGHT_ARM_BLOCKING_OVERRIDE = vector.new (20, -20, 0):apply (math.rad)
+local LEFT_ARM_BLOCKING_OVERRIDE = vector.new (20, 20, 0):apply (math.rad)
 
-local LEFT_ARM_BLOCKING_OVERRIDE = {
-	rotation = {
-		vec = vector.new (20, 20, 0):apply (math.rad),
-		absolute = true,
-	},
-}
-
-local ZERO_OVERRIDE = {
+local OVERRIDE_TEMPLATE = {
 	rotation = {
 		vec = vector.zero (),
 		absolute = true,
@@ -1441,6 +1447,43 @@ local ZERO_OVERRIDE = {
 }
 
 local DEFAULT_FOV = 86.1
+
+function localplayer:rotate_non_redundantly (bone, rot_x, rot_y, rot_z)
+	local existing = self._bone_overrides[bone]
+	if existing
+		and existing.x == rot_x
+		and existing.y == rot_y
+		and existing.z == rot_z then
+		return
+	end
+
+	mcl_localplayer.profile ("LocalPlayer set_bone_override")
+	local v = OVERRIDE_TEMPLATE.rotation.vec
+	v.x = rot_x
+	v.y = rot_y
+	v.z = rot_z
+	self.object:set_bone_override (bone, OVERRIDE_TEMPLATE)
+	if existing then
+		existing.x = rot_x
+		existing.y = rot_y
+		existing.z = rot_z
+	else
+		self._bone_overrides[bone] = vector.copy (v)
+	end
+	mcl_localplayer.profile_done ("LocalPlayer set_bone_override")
+end
+
+local NOTHING = {}
+
+function localplayer:unrotate (bone)
+	local existing = self._bone_overrides[bone]
+	if existing then
+		mcl_localplayer.profile ("LocalPlayer set_bone_override")
+		self.object:set_bone_override (bone, NOTHING)
+		self._bone_overrides[bone] = nil
+		mcl_localplayer.profile_done ("LocalPlayer set_bone_override")
+	end
+end
 
 function localplayer:tick_animation (controls, dtime)
 	mcl_localplayer.profile ("LocalPlayer tick_animation")
@@ -1483,56 +1526,51 @@ function localplayer:tick_animation (controls, dtime)
 	mcl_localplayer.profile_done ("LocalPlayer animate FOV")
 
 	-- Animate body.
+	mcl_localplayer.profile ("LocalPlayer animate prologue")
 	local look_dir = core.camera:get_look_horizontal ()
 	local v = vector.normalize (v)
 	local move_yaw = (math.abs (v.z) < 0.35 and math.abs (v.x) < 0.35)
 		and self._last_move_yaw or math.atan2 (v.z, v.x) - math.pi / 2
+	mcl_localplayer.profile_done ("LocalPlayer animate prologue")
 
+	mcl_localplayer.profile ("LocalPlayer animate pose")
 	if self.pose == POSE_SWIMMING then
 		local pitch = core.camera:get_look_vertical ()
 		local move_pitch = dir_to_pitch (v)
 		local norm_look_dir = norm_radians (look_dir)
-		local rot = vector.new ((pitch - move_pitch) + TWENTY_DEG,
+		self:rotate_non_redundantly ("Head_Control",
+			(pitch - move_pitch) + TWENTY_DEG,
 			move_yaw - norm_look_dir, 0)
-		self.object:set_bone_override ("Head_Control", {
-			rotation = { vec = rot, absolute = true, },
-		})
-		rot.x = SEVENTY_FIVE_DEG + move_pitch
-		rot.y = move_yaw - norm_look_dir
-		rot.z = math.pi
-		self.object:set_bone_override ("Body_Control", {
-			rotation = { vec = rot, absolute = true, },
-		})
+		local x = SEVENTY_FIVE_DEG + move_pitch
+		local y = move_yaw - norm_look_dir
+		local z = math.pi
+		self:rotate_non_redundantly ("Body_Control", x, y, z)
 		self._last_move_yaw = move_yaw
+		mcl_localplayer.profile_done ("LocalPlayer animate pose")
 		mcl_localplayer.profile_done ("LocalPlayer tick_animation")
 		return
 	elseif self.pose == POSE_FALL_FLYING then
 		local move_pitch = dir_to_pitch (v)
 		local xrot = move_pitch + FIFTY_DEG
 		local yrot = move_yaw - look_dir
-		local rot = vector.new (xrot, yrot, 0)
-		self.object:set_bone_override ("Head_Control", {
-			rotation = { vec = rot, absolute = true, },
-		})
+		self:rotate_non_redundantly ("Head_Control", xrot, yrot, 0)
 		local xrot = move_pitch + ONE_HUNDRED_AND_TEN_DEG
 		local yrot = -move_yaw + norm_radians (look_dir)
-		rot.x = xrot
-		rot.y = yrot
-		rot.z = math.pi
-		self.object:set_bone_override ("Body_Control", {
-			rotation = { vec = rot, absolute = true, },
-		})
+		self:rotate_non_redundantly ("Body_Control", xrot, yrot, math.pi)
 		self._last_move_yaw = move_yaw
+		mcl_localplayer.profile_done ("LocalPlayer animate pose")
 		mcl_localplayer.profile_done ("LocalPlayer tick_animation")
 		return
 	elseif self.pose == POSE_SLEEPING then
-		self.object:set_bone_override ("Head_Control", {})
-		self.object:set_bone_override ("Body_Control", ZERO_OVERRIDE)
+		self:unrotate ("Head_Control")
+		self:rotate_non_redundantly ("Body_Control", 0, 0, 0)
+		mcl_localplayer.profile_done ("LocalPlayer animate pose")
 		mcl_localplayer.profile_done ("LocalPlayer tick_animation")
 		return
 	elseif self.pose == POSE_DEATH then
-		self.object:set_bone_override ("Head_Control", {})
-		self.object:set_bone_override ("Body_Control", {})
+		self:unrotate ("Head_Control")
+		self:unrotate ("Body_Control")
+		mcl_localplayer.profile_done ("LocalPlayer animate pose")
 		mcl_localplayer.profile_done ("LocalPlayer tick_animation")
 		return
 	end
@@ -1547,13 +1585,8 @@ function localplayer:tick_animation (controls, dtime)
 			local yaw = attach:get_yaw ()
 			local yrot = -norm_radians (look_dir - norm_radians (yaw))
 			local pitch = core.camera:get_look_vertical ()
-			self.object:set_bone_override ("Body_Control", ZERO_OVERRIDE)
-			self.object:set_bone_override ("Head_Control", {
-				rotation = {
-					vec = vector.new (pitch, yrot, 0),
-					absolute = true,
-				},
-			})
+			self:rotate_non_redundantly ("Body_Control", 0, 0, 0)
+			self:rotate_non_redundantly ("Head_Control", pitch, yrot, 0)
 		end
 	else
 		if diff > FOURTY_DEG then
@@ -1563,54 +1596,51 @@ function localplayer:tick_animation (controls, dtime)
 		end
 		self._last_move_yaw = move_yaw_lim
 		local body = look_dir_new - move_yaw_lim
-		local rot = vector.new (0, body, 0)
-		self.object:set_bone_override ("Body_Control", {
-			rotation = { vec = rot, absolute = true, },
-		})
-		rot.y = move_yaw_lim - look_dir_new
-		rot.x = core.camera:get_look_vertical ()
-		self.object:set_bone_override ("Head_Control", {
-			rotation = { vec = rot, absolute = true, },
-		})
+		self:rotate_non_redundantly ("Body_Control", 0, body, 0)
+		local y = move_yaw_lim - look_dir_new
+		local x = core.camera:get_look_vertical ()
+		self:rotate_non_redundantly ("Head_Control", x, y, 0)
 	end
+
+	mcl_localplayer.profile_done ("LocalPlayer animate pose")
+	mcl_localplayer.profile ("LocalPlayer animate arm rotation")
 
 	-- Control arm rotation whilst blocking.
 	if self.blocking == 2 then
-		self.object:set_bone_override ("Arm_Right", ZERO_OVERRIDE)
-		self.object:set_bone_override ("Arm_Left", nil)
-		self.object:set_bone_override ("Arm_Right_Pitch_Control",
-					RIGHT_ARM_BLOCKING_OVERRIDE)
-		self.object:set_bone_override ("Arm_Left_Pitch_Control", nil)
+		self:rotate_non_redundantly ("Arm_Right", 0, 0, 0)
+		self:unrotate ("Arm_Left")
+		self:rotate_non_redundantly ("Arm_Right_Pitch_Control",
+					RIGHT_ARM_BLOCKING_OVERRIDE.x,
+					RIGHT_ARM_BLOCKING_OVERRIDE.y,
+					RIGHT_ARM_BLOCKING_OVERRIDE.z)
+		self:unrotate ("Arm_Left_Pitch_Control")
 	elseif self.blocking == 1 then
-		self.object:set_bone_override ("Arm_Right", nil)
-		self.object:set_bone_override ("Arm_Left", ZERO_OVERRIDE)
-		self.object:set_bone_override ("Arm_Right_Pitch_Control", nil)
-		self.object:set_bone_override ("Arm_Left_Pitch_Control",
-					LEFT_ARM_BLOCKING_OVERRIDE)
+		self:unrotate ("Arm_Right")
+		self:rotate_non_redundantly ("Arm_Left", 0, 0, 0)
+		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", 0, 0, 0)
+		self:rotate_non_redundantly ("Arm_Left_Pitch_Control",
+					LEFT_ARM_BLOCKING_OVERRIDE.x,
+					LEFT_ARM_BLOCKING_OVERRIDE.y,
+					LEFT_ARM_BLOCKING_OVERRIDE.z)
 	elseif mcl_localplayer.is_using_bow_visually () then
-		self.object:set_bone_override ("Arm_Right", ZERO_OVERRIDE)
-		self.object:set_bone_override ("Arm_Left", ZERO_OVERRIDE)
+		self:rotate_non_redundantly ("Arm_Right", 0, 0, 0)
+		self:rotate_non_redundantly ("Arm_Left", 0, 0, 0)
 		local pitch = math.deg (core.camera:get_look_vertical ())
 		local right_arm_rot = vector.new (pitch + 90, -30, pitch * -1 * .35):apply (math.rad)
 		local left_arm_rot = vector.new (pitch + 90, 43, pitch * 0.35):apply (math.rad)
-		self.object:set_bone_override ("Arm_Right_Pitch_Control", {
-			rotation = {
-				vec = right_arm_rot,
-				absolute = true,
-			},
-		})
-		self.object:set_bone_override ("Arm_Left_Pitch_Control", {
-			rotation = {
-				vec = left_arm_rot,
-				absolute = true,
-			},
-		})
+		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", right_arm_rot.x,
+					right_arm_rot.y,
+					right_arm_rot.z)
+		self:rotate_non_redundantly ("Arm_Left_Pitch_Control", left_arm_rot.x,
+					left_arm_rot.y,
+					left_arm_rot.z)
 	else
-		self.object:set_bone_override ("Arm_Right", nil)
-		self.object:set_bone_override ("Arm_Left", nil)
-		self.object:set_bone_override ("Arm_Right_Pitch_Control", nil)
-		self.object:set_bone_override ("Arm_Left_Pitch_Control", nil)
+		self:unrotate ("Arm_Right")
+		self:unrotate ("Arm_Left")
+		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", 0, 0, 0)
+		self:rotate_non_redundantly ("Arm_Left_Pitch_Control", 0, 0, 0)
 	end
+	mcl_localplayer.profile_done ("LocalPlayer animate arm rotation")
 	mcl_localplayer.profile_done ("LocalPlayer tick_animation")
 end
 
