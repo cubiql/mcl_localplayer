@@ -4,6 +4,136 @@ mcl_localplayer = {
 local modname = core.get_current_modname ()
 print ("*** Loading Mineclonia CSM")
 
+------------------------------------------------------------------------
+-- Profiler.
+------------------------------------------------------------------------
+
+local profiling_enabled = false
+
+if profiling_enabled then
+
+local eventpdl = {}
+local root = {
+	name = "Root",
+	total = 0,
+	direct = 0,
+	referents = {},
+}
+
+function mcl_localplayer.profile (name)
+	local clock = os.clock ()
+	local count = #eventpdl
+	local tbl
+
+	if count > 0 and eventpdl[count].referents[name] then
+		tbl = eventpdl[count].referents[name]
+	else
+		tbl = {
+			name = name,
+			total = 0,
+			direct = 0,
+			referents = {},
+		}
+	end
+	tbl.start = clock
+
+	eventpdl[count + 1] = tbl
+	if count > 0 then
+		eventpdl[count].referents[name] = tbl
+	end
+end
+
+function mcl_localplayer.profile_done (name)
+	local clock = os.clock ()
+	local count = #eventpdl
+	local tbl = eventpdl[count]
+	local parent = eventpdl[count - 1]
+	local total = clock - tbl.start
+
+	eventpdl[count] = nil
+	tbl.total = tbl.total + total
+	tbl.direct = tbl.direct + total
+	if count > 1 then
+		parent.direct = parent.direct - total
+	end
+	assert (tbl.name == name)
+	return tbl
+end
+
+local function merge_tables (proto, tbl)
+	proto.total = proto.total + tbl.total
+	proto.direct = proto.direct + tbl.direct
+
+	for k, v in pairs (tbl.referents) do
+		if proto.referents[k] then
+			merge_tables (proto.referents[k], v)
+		else
+			proto.referents[k] = v
+		end
+	end
+end
+
+local prof_time = 0.0
+
+local function compare_total (a, b)
+	return a.total > b.total
+end
+
+local function print_record (tbl, level)
+	print (string.format ("%-46s %15.2f %15.2f",
+			string.rep ('-', level * 2) .. tbl.name,
+			tbl.direct * 1000 * 1000,
+			tbl.total * 1000 * 1000))
+	local keys = {}
+	for _, rec in pairs (tbl.referents) do
+		table.insert (keys, rec)
+	end
+	table.sort (keys, compare_total)
+	for _, rec in ipairs (keys) do
+		print_record (rec, level + 1)
+	end
+end
+
+local function flush_tables (dtime)
+	-- Begin printing records.
+	print (string.format ("After %.2f seconds of activity: ", dtime))
+	print ("                                                   DIRECT (us)      TOTAL (us)")
+	print_record (root, 0)
+
+	-- Reset root.
+	root.referents = {}
+	root.total = 0.0
+	root.direct = 0.0
+end
+
+local PRINT_INTERVAL = 3.0
+
+function mcl_localplayer.profiler_collect (data, dtime)
+	merge_tables (root, data)
+	prof_time = prof_time + dtime
+	if prof_time > PRINT_INTERVAL then
+		flush_tables (prof_time)
+		prof_time = 0
+	end
+end
+
+else
+
+function mcl_localplayer.profile (name)
+end
+
+function mcl_localplayer.profile_done (name)
+end
+
+function mcl_localplayer.profiler_collect (data, dtime)
+end
+
+end
+
+------------------------------------------------------------------------
+-- Files.
+------------------------------------------------------------------------
+
 dofile (minetest.get_modpath (modname) .. "/util.lua")
 dofile (minetest.get_modpath (modname) .. "/miniflowlib.lua")
 dofile (minetest.get_modpath (modname) .. "/player.lua")
