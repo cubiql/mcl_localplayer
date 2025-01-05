@@ -1,0 +1,23 @@
+Protocol version: 0
+
+`mcl_localplayer' is an optional client-side mod for the Luanti
+(formerly Minetest) game Mineclonia, which implements client-side
+prediction for a number of gameplay elements (such as bows and
+sprinting), client-side mob and boat driving, and a player physics
+engine that reproduces the laws of physics of Minecraft.
+
+At the present time, it must be installed in combination with a
+modified version of Mineclonia and one of Minetest compiled from
+source code, which are linked in the repo description.
+
+Once installed to the `~/.minetest/clientmods' directory, this
+client-side mod must be enabled by inserting:
+
+    load_mod_mcl_localplayer = true
+
+into a file `mods.conf' in the same directory, and:
+
+    enable_client_modding = true
+
+into minetest.conf.  This mod is unobtrusive and will not enter into
+effect if it does not detect corresponding server-side support.
