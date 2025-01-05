@@ -161,6 +161,10 @@ function localplayer:jump_actual (v, jump_force)
 	end
 	mcl_localplayer.send_movement_event (PLAYER_EVENT_JUMP)
 	self.localplayer:set_touching_ground (false)
+	-- Disable stepheight; it should not be enabled during the
+	-- first call to collision_move after motion_step, which is
+	-- intended to assess whether it is to be enabled.
+	self:toggle_step_height (false)
 	return v
 end
 
@@ -779,6 +783,18 @@ local function get_y_axis_collisions (self_pos, moveresult)
 	return collisions
 end
 
+function localplayer:toggle_step_height (enable_step_height)
+	profile ("LocalPlayer toggle_step_height")
+	if enable_step_height and self._previously_floating then
+		self._previously_floating = false
+		self.object:clear_property_overrides ({"stepheight"})
+	elseif not enable_step_height and not self._previously_floating then
+		self._previously_floating = true
+		self.object:set_property_overrides ({stepheight = 0.0})
+	end
+	profile_done ("LocalPlayer toggle_step_height")
+end
+
 function localplayer:test_collision (self_pos, moveresult, v)
 	profile ("LocalPlayer test_collision")
 	if not self.horiz_collision then
@@ -812,14 +828,7 @@ function localplayer:test_collision (self_pos, moveresult, v)
 
 	-- Enable or disable stepheight according as this mob is
 	-- colliding with the ground.
-	local enable_step_height = self.touching_ground
-	if enable_step_height and self._previously_floating then
-		self._previously_floating = false
-		self.object:clear_property_overrides ({"stepheight"})
-	elseif not enable_step_height and not self._previously_floating then
-		self._previously_floating = true
-		self.object:set_property_overrides ({stepheight = 0.0})
-	end
+	self:toggle_step_height (not not self.touching_ground)
 	profile_done ("LocalPlayer test_collision")
 end
 

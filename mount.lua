@@ -176,20 +176,7 @@ end
 
 local horiz_collision = mcl_localplayer.horiz_collision
 
-function mob_table:test_collision (self_pos, moveresult, v)
-	if not self.horiz_collision then
-		self.horiz_collision = horiz_collision (moveresult)
-	end
-	if not self.touching_ground then
-		if moveresult.touching_ground then
-			self.touching_ground, self.ground_standon
-				= get_y_axis_collisions (self_pos, moveresult)
-		end
-	end
-
-	-- Enable or disable stepheight according as this mob is
-	-- colliding with the ground.
-	local enable_step_height = not not self.touching_ground
+function mob_table:toggle_step_height (enable_step_height)
 	if enable_step_height ~= self._previously_floating then
 		mcl_localplayer.send_configure_vehicle ({
 			touching_ground = enable_step_height,
@@ -206,6 +193,22 @@ function mob_table:test_collision (self_pos, moveresult, v)
 			})
 		end
 	end
+end
+
+function mob_table:test_collision (self_pos, moveresult, v)
+	if not self.horiz_collision then
+		self.horiz_collision = horiz_collision (moveresult)
+	end
+	if not self.touching_ground then
+		if moveresult.touching_ground then
+			self.touching_ground, self.ground_standon
+				= get_y_axis_collisions (self_pos, moveresult)
+		end
+	end
+
+	-- Enable or disable stepheight according as this mob is
+	-- colliding with the ground.
+	self:toggle_step_height (not not self.touching_ground)
 end
 
 local touching_only_ignore = mcl_localplayer.touching_only_ignore
@@ -339,6 +342,10 @@ function mob_table:jump_actual (v, jump_force)
 		v.x = v.x + math.sin (yaw) * -4.0
 		v.z = v.z + math.cos (yaw) * 4.0
 	end
+	-- Disable stepheight; it should not be enabled during the
+	-- first call to collision_move after motion_step, which is
+	-- intended to assess whether it is to be enabled.
+	self:toggle_step_height (false)
 	return v
 end
 
