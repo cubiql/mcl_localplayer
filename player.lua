@@ -687,10 +687,10 @@ function localplayer:crouch_reduce_velocity (v, self_pos)
 end
 
 function localplayer:may_sprint (controls)
-	return self.can_sprint
-	-- TODO: bows, forward impulse tests.
+	return self.can_sprint	
 		and controls.movement_y > 0
 		and self.pose ~= POSE_FALL_FLYING
+		and not mcl_localplayer.is_using_bow ()
 end
 
 local SPEED_MODIFIER_SPRINTING = "mcl_localplayer:sprint_modifier"
@@ -1409,7 +1409,7 @@ function localplayer:apply_pose (pose)
 
 		self:set_physics_factor_base ("target_eye_height",
 					posedef.eye_height)
-		self.object:set_animation (posedef[self.animation], 0.05)
+		self.object:set_animation (posedef[self.animation], 0.25)
 	end
 	mcl_localplayer.send_playerpose (pose)
 	self.pose = pose
@@ -1518,7 +1518,7 @@ function localplayer:tick_animation (controls, dtime)
 		local posedef = mcl_localplayer.pose_defs[self.pose]
 		self.animation = anim
 		if posedef then
-			self.object:set_animation (posedef[anim], 0.05)
+			self.object:set_animation (posedef[anim], 0.25)
 			mcl_localplayer.send_playeranim (anim)
 		end
 	end
