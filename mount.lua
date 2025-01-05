@@ -1,7 +1,5 @@
 ------------------------------------------------------------------------
 -- Mob & vehicle mounting.
--- TODO: status effects, knockback, animations.
--- TODO: unify many functions with player.lua.
 ------------------------------------------------------------------------
 
 local localplayer = mcl_localplayer.localplayer
