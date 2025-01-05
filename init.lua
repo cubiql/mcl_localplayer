@@ -17,29 +17,43 @@ local root = {
 	name = "Root",
 	total = 0,
 	direct = 0,
+	this_total = 0,
 	referents = {},
 }
 
+local event_start = nil
+
 function mcl_localplayer.profile (name)
+	local clock = os.clock ()
 	local count = #eventpdl
 	local tbl
+	local parent = count > 0 and eventpdl[count] or nil
 
-	if count > 0 and eventpdl[count].referents[name] then
-		tbl = eventpdl[count].referents[name]
+	if parent then
+		local elapsed = clock - event_start
+		parent.total = parent.total + elapsed
+		parent.this_total = parent.this_total + elapsed
+		parent.direct = parent.direct + elapsed
+	end
+
+	if parent and parent.referents[name] then
+		tbl = parent.referents[name]
+		tbl.this_total = 0
 	else
 		tbl = {
 			name = name,
+			this_total = 0,
 			total = 0,
 			direct = 0,
 			referents = {},
 		}
+		if parent then
+			parent.referents[name] = tbl
+		end
 	end
 
 	eventpdl[count + 1] = tbl
-	if count > 0 then
-		eventpdl[count].referents[name] = tbl
-	end
-	tbl.start = os.clock ()
+	event_start = os.clock ()
 end
 
 function mcl_localplayer.profile_done (name)
@@ -47,13 +61,16 @@ function mcl_localplayer.profile_done (name)
 	local count = #eventpdl
 	local tbl = eventpdl[count]
 	local parent = eventpdl[count - 1]
-	local total = clock - tbl.start
+	local total = clock - event_start
 
 	eventpdl[count] = nil
 	tbl.total = tbl.total + total
 	tbl.direct = tbl.direct + total
+	tbl.this_total = tbl.this_total + total
 	if count > 1 then
-		parent.direct = parent.direct - total
+		parent.total = parent.total + tbl.this_total
+		parent.this_total = parent.this_total + tbl.this_total
+		event_start = os.clock ()
 	end
 	assert (tbl.name == name)
 	return tbl

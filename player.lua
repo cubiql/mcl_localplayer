@@ -81,8 +81,12 @@ local localplayer = {
 	yaw_locked = false,
 	mount_pose = POSE_MOUNTED,
 	_bone_overrides = {},
+	last_yaw = 0.0,
 }
 mcl_localplayer.localplayer = localplayer
+
+local profile = mcl_localplayer.profile
+local profile_done = mcl_localplayer.profile_done
 
 local AIR_DRAG			= 0.98
 local AIR_FRICTION		= 0.91
@@ -123,7 +127,7 @@ function localplayer:get_flying_speed (params)
 end
 
 function localplayer:accelerate_relative (acc, speed_x, speed_y)
-	local yaw = core.camera:get_look_horizontal ()
+	local yaw = self.last_yaw
 	local acc_x, acc_y, acc_z
 	local magnitude = vector.length (acc)
 	if magnitude > 1.0 then
@@ -153,7 +157,7 @@ function localplayer:jump_actual (v, jump_force)
 
 	-- Apply acceleration if sprinting.
 	if self._sprinting then
-		local yaw = core.camera:get_look_horizontal ()
+		local yaw = self.last_yaw
 		v.x = v.x + math.sin (yaw) * -4.0
 		v.z = v.z + math.cos (yaw) * 4.0
 	end
@@ -233,9 +237,9 @@ function mcl_localplayer.get_node_def (name)
 end
 
 function localplayer:check_standin (pos, params)
-	mcl_localplayer.profile ("LocalPlayer check_standin")
+	profile ("LocalPlayer check_standin")
 	if params.flying then
-		mcl_localplayer.profile_done ("LocalPlayer check_standin")
+		profile_done ("LocalPlayer check_standin")
 		return 0.0, nil
 	end
 
@@ -281,7 +285,7 @@ function localplayer:check_standin (pos, params)
 			end
 		end
 	end
-	mcl_localplayer.profile_done ("LocalPlayer check_standin")
+	profile_done ("LocalPlayer check_standin")
 	return immersion_depth, worst_type
 end
 
@@ -320,8 +324,8 @@ function mcl_localplayer.apply_rocket_use (num_secs)
 end
 
 function localplayer:motion_step (v, self_pos, moveresult, controls, params)
-	mcl_localplayer.profile ("LocalPlayer motion_step")
-	mcl_localplayer.profile ("LocalPlayer motion_step prologue")
+	profile ("LocalPlayer motion_step")
+	profile ("LocalPlayer motion_step prologue")
 	local acc_dir = self.acc_dir
 	local acc_speed = self.movement_speed
 	-- core.get_node_def is REALLY expensive because it
@@ -374,10 +378,10 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		local dir = core.camera:get_look_dir ()
 		self:rocket_boost (dir, v)
 	end
-	mcl_localplayer.profile_done ("LocalPlayer motion_step prologue")
+	profile_done ("LocalPlayer motion_step prologue")
 
 	if liquidtype == "water" then
-		mcl_localplayer.profile ("LocalPlayer water movement")
+		profile ("LocalPlayer water movement")
 		local water_vec = self:check_water_flow (self_pos)
 		local water_friction = self.water_friction
 		if self._sprinting then
@@ -449,9 +453,9 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 				v.y = 6.0
 			end
 		end
-		mcl_localplayer.profile_done ("LocalPlayer water movement")
+		profile_done ("LocalPlayer water movement")
 	elseif liquidtype == "lava" then
-		mcl_localplayer.profile ("LocalPlayer lava movement")
+		profile ("LocalPlayer lava movement")
 		local speed = LAVA_SPEED
 		local r = LAVA_FRICTION
 		local fv_x, fv_y, fv_z
@@ -477,9 +481,9 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 				v.y = 6.0
 			end
 		end
-		mcl_localplayer.profile_done ("LocalPlayer lava movement")
+		profile_done ("LocalPlayer lava movement")
 	elseif self.fall_flying then
-		mcl_localplayer.profile ("LocalPlayer fall flying")
+		profile ("LocalPlayer fall flying")
 		-- Limit fall_distance to 1.0 if vertical velocity is
 		-- less than -0.5 n/tick.
 		if v.y > -10.0 and self.fall_distance > 1.0 then
@@ -520,9 +524,9 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		v.x = v.x * FALL_FLYING_DRAG_HORIZ
 		v.z = v.z * FALL_FLYING_DRAG_HORIZ
 		v.y = v.y * AIR_DRAG
-		mcl_localplayer.profile_done ("LocalPlayer fall flying")
+		profile_done ("LocalPlayer fall flying")
 	else
-		mcl_localplayer.profile ("LocalPlayer movement")
+		profile ("LocalPlayer movement")
 		-- If not standing on air, apply slippery to a base value of
 		-- 0.6.
 		local slippery = last_standon.groups.slippery
@@ -585,10 +589,10 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 			v.y = v.y + fv_y
 			self.reset_fall_damage = true
 		end
-		mcl_localplayer.profile_done ("LocalPlayer movement")
+		profile_done ("LocalPlayer movement")
 	end
 
-	mcl_localplayer.profile ("LocalPlayer motion_step epilogue")
+	profile ("LocalPlayer motion_step epilogue")
 	if jumping then
 		if liquidtype then
 			v.y = v.y + LIQUID_JUMP_FORCE
@@ -633,8 +637,8 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	if v.z > -MIN_VELOCITY and v.z < MIN_VELOCITY then
 		v.z = 0
 	end
-	mcl_localplayer.profile_done ("LocalPlayer motion_step epilogue")
-	mcl_localplayer.profile_done ("LocalPlayer motion_step")
+	profile_done ("LocalPlayer motion_step epilogue")
+	profile_done ("LocalPlayer motion_step")
 	return v
 end
 
@@ -643,7 +647,7 @@ function localplayer:check_crouch_axis_x (self_pos, x)
 		if x > 0 then
 			x = math.max (0, x - ONE_TICK)
 		else
-			x = math.max (0, x + ONE_TICK)
+			x = math.min (0, x + ONE_TICK)
 		end
 	end
 	return x
@@ -654,7 +658,7 @@ function localplayer:check_crouch_axis_z (self_pos, z)
 		if z > 0 then
 			z = math.max (0, z - ONE_TICK)
 		else
-			z = math.max (0, z + ONE_TICK)
+			z = math.min (0, z + ONE_TICK)
 		end
 	end
 	return z
@@ -665,21 +669,23 @@ function localplayer:check_crouch_axis_both (self_pos, x, z)
 		if x > 0 then
 			x = math.max (0, x - ONE_TICK)
 		elseif x < 0 then
-			x = math.max (0, x + ONE_TICK)
+			x = math.min (0, x + ONE_TICK)
 		end
 		if z > 0 then
 			z = math.max (0, z - ONE_TICK)
 		elseif z < 0 then
-			z = math.max (0, z + ONE_TICK)
+			z = math.min (0, z + ONE_TICK)
 		end
 	end
 	return x, z
 end
 
 function localplayer:crouch_reduce_velocity (v, self_pos)
+	profile ("LocalPlayer crouching")
 	v.x = self:check_crouch_axis_x (self_pos, v.x)
 	v.z = self:check_crouch_axis_z (self_pos, v.z)
 	v.x, v.z = self:check_crouch_axis_both (self_pos, v.x, v.z)
+	profile_done ("LocalPlayer crouching")
 end
 
 function localplayer:may_sprint (controls)
@@ -719,7 +725,7 @@ end
 
 function localplayer:collision_angle ()
 	local v = self.localplayer:get_velocity ()
-	local yaw = core.camera:get_look_horizontal ()
+	local yaw = self.last_yaw
 	local forward = vector.new (-math.sin (yaw), 0, math.cos (yaw))
 	v.y = 0
 	v = vector.normalize (v)
@@ -729,7 +735,7 @@ end
 local EIGHT_DEG = math.rad (8)
 
 function localplayer:send_movement_state ()
-	mcl_localplayer.profile ("LocalPlayer send_movement_state")
+	profile ("LocalPlayer send_movement_state")
 	local state = self.server_movement_state
 	local in_water = self._immersion_depth > 0 and self.liquidtype == "water"
 	if state.in_water ~= in_water
@@ -742,7 +748,7 @@ function localplayer:send_movement_state ()
 		state.is_swimming = self.swimming
 		mcl_localplayer.send_movement_state (state)
 	end
-	mcl_localplayer.profile_done ("LocalPlayer send_movement_state")
+	profile_done ("LocalPlayer send_movement_state")
 end
 
 local function dist_horizontal_sqr (v1, v2)
@@ -776,7 +782,7 @@ local function get_y_axis_collisions (self_pos, moveresult)
 end
 
 function localplayer:test_collision (self_pos, moveresult, v)
-	mcl_localplayer.profile ("LocalPlayer test_collision")
+	profile ("LocalPlayer test_collision")
 	if not self.horiz_collision then
 		local old, new
 		self.horiz_collision, old, new = horiz_collision (moveresult)
@@ -816,7 +822,7 @@ function localplayer:test_collision (self_pos, moveresult, v)
 		self._previously_floating = true
 		self.object:set_property_overrides ({stepheight = 0.0})
 	end
-	mcl_localplayer.profile_done ("LocalPlayer test_collision")
+	profile_done ("LocalPlayer test_collision")
 end
 
 function localplayer:post_motion_step (v, self_pos, control, params)
@@ -917,14 +923,7 @@ function localplayer:check_fall_damage (self_pos, touching_ground, params)
 end
 
 local function norm_radians (x)
-	local x = x % (math.pi * 2)
-	if x >= math.pi then
-		x = x - math.pi * 2
-	end
-	if x < -math.pi then
-		x = x + math.pi * 2
-	end
-	return x
+	return (x + math.pi) % (math.pi * 2) - math.pi
 end
 
 mcl_localplayer.norm_radians = norm_radians
@@ -934,7 +933,7 @@ function localplayer.on_step (dtime, moveresult, params)
 	local self = localplayer
 	local control = player:get_control ()
 	local self_pos = self.localplayer:get_pos ()
-	mcl_localplayer.profile ("on_step")
+	profile ("on_step")
 
 	if not moveresult then
 		moveresult = {
@@ -945,7 +944,7 @@ function localplayer.on_step (dtime, moveresult, params)
 		}
 	end
 
-	mcl_localplayer.profile ("LocalPlayer camera control")
+	profile ("LocalPlayer camera control")
 	-- Set camera yaw and pitch.
 	local cam_yaw = control.yaw + self.yaw_offset
 	local cam_pitch = control.pitch + self.pitch_offset
@@ -967,16 +966,22 @@ function localplayer.on_step (dtime, moveresult, params)
 
 	core.camera:set_look_horizontal (cam_yaw)
 	core.camera:set_look_vertical (cam_pitch)
-	mcl_localplayer.profile_done ("LocalPlayer camera control")
+	self.last_yaw = cam_yaw
+	profile_done ("LocalPlayer camera control")
 
 	-- Am I mounted?
-	mcl_localplayer.profile ("LocalPlayer mounting tests")
+	profile ("LocalPlayer mounting tests")
 	local mount = self.object:get_attach ()
 	mcl_localplayer.update_mounting (mount)
 	if mount then
 		self.fall_distance = 0.0
 		self.last_fall_y = nil
 		self.localplayer:set_touching_ground (nil)
+		self:set_sprinting (false)
+		self:set_swimming (false)
+		self:set_fall_flying (false)
+		-- Send physics state to server.
+		self:send_movement_state ()
 
 		-- Configure a suitable pose.
 		local pose = self.mount_pose
@@ -984,12 +989,12 @@ function localplayer.on_step (dtime, moveresult, params)
 			self:apply_pose (pose)
 		end
 		self:tick_animation (control, dtime)
-		mcl_localplayer.profile_done ("LocalPlayer mounting tests")
+		profile_done ("LocalPlayer mounting tests")
 		return
 	end
-	mcl_localplayer.profile_done ("LocalPlayer mounting tests")
+	profile_done ("LocalPlayer mounting tests")
 
-	mcl_localplayer.profile ("Localplayer supporting node computation")
+	profile ("Localplayer supporting node computation")
 	-- Set self.standin and self.standon.
 	local diff = math.abs (self_pos.y - (math.floor (self_pos.y) + 0.5))
 	local test_pos = vector.offset (self_pos, 0, 0.01, 0)
@@ -1006,7 +1011,7 @@ function localplayer.on_step (dtime, moveresult, params)
 		self._last_standon = self.standon
 		self._last_standin = self.standin
 	end
-	mcl_localplayer.profile_done ("Localplayer supporting node computation")
+	profile_done ("Localplayer supporting node computation")
 
 	-- Test movement info for collisions unless it would be
 	-- reverted anyway.
@@ -1030,7 +1035,7 @@ function localplayer.on_step (dtime, moveresult, params)
 	self._immersion_depth = immersion_depth
 	self.liquidtype = liquidtype
 
-	mcl_localplayer.profile ("LocalPlayer pose control")
+	profile ("LocalPlayer pose control")
 	-- Begin sprinting if possible.
 	if self:may_sprint (control) and control.aux1
 		and (not control.sneak or params.flying)
@@ -1059,13 +1064,13 @@ function localplayer.on_step (dtime, moveresult, params)
 					or mcl_localplayer.has_effect ("levitation")) then
 		self:set_fall_flying (false)
 	end
-	mcl_localplayer.profile_done ("LocalPlayer pose control")
+	profile_done ("LocalPlayer pose control")
 
 	-- Send physics state to server.
 	self:send_movement_state ()
 
 	-- Set jumping flag.
-	self.jumping = control.jump and not self.fall_flying
+	self.jumping = control.jump
 
 	-- Apply acceleration.
 	-- Slow down players using shields or bows.  TODO: the bows.
@@ -1084,13 +1089,13 @@ function localplayer.on_step (dtime, moveresult, params)
 		self.acc_dir.x = control.movement_x * base
 	end
 
-	mcl_localplayer.profile ("LocalPlayer pose application")
+	profile ("LocalPlayer pose application")
 	-- Configure a suitable pose.
 	local pose = self:desired_pose (self_pos, control, params)
 	if pose ~= self.pose then
 		self:apply_pose (pose)
 	end
-	mcl_localplayer.profile_done ("LocalPlayer pose application")
+	profile_done ("LocalPlayer pose application")
 	self:tick_animation (control, dtime)
 
 	----------------------------------------------------------------
@@ -1102,7 +1107,7 @@ function localplayer.on_step (dtime, moveresult, params)
 	----------------------------------------------------------------
 
 	if t >= ONE_TICK then
-		mcl_localplayer.profile ("LocalPlayer physics")
+		profile ("LocalPlayer physics")
 		-- Apply that portion of the globalstep which elapsed
 		-- before this globalstep.
 		local adj_pos = params.old_position
@@ -1114,15 +1119,15 @@ function localplayer.on_step (dtime, moveresult, params)
 			adj_pos.y = adj_pos.y + v.y * before
 			adj_pos.z = adj_pos.z + v.z * before
 		else
-			mcl_localplayer.profile ("LocalPlayer collision_move")
+			profile ("LocalPlayer collision_move")
 			adj_pos, v, moveresult
 				= self.localplayer:collision_move (adj_pos, v, before)
 			self:test_collision (adj_pos, moveresult, v)
-			mcl_localplayer.profile_done ("LocalPlayer collision_move")
+			profile_done ("LocalPlayer collision_move")
 		end
 
 		-- Run the physics simulation.
-		mcl_localplayer.profile ("LocalPlayer physics simulation")
+		profile ("LocalPlayer physics simulation")
 		local phys_start = switchtime + before
 		while phys_start <= t do
 			local time = math.min (ONE_TICK, t - phys_start)
@@ -1158,24 +1163,24 @@ function localplayer.on_step (dtime, moveresult, params)
 				adj_pos.y = adj_pos.y + v.y * time
 				adj_pos.z = adj_pos.z + v.z * time
 			else
-				mcl_localplayer.profile ("LocalPlayer collision_move")
+				profile ("LocalPlayer collision_move")
 				adj_pos, v, moveresult
 					= self.localplayer:collision_move (adj_pos, v, time)
 				self:test_collision (adj_pos, moveresult, v)
-				mcl_localplayer.profile_done ("LocalPlayer collision_move")
+				profile_done ("LocalPlayer collision_move")
 			end
 			phys_start = phys_start + ONE_TICK
 		end
-		mcl_localplayer.profile_done ("LocalPlayer physics simulation")
+		profile_done ("LocalPlayer physics simulation")
 		self.localplayer:set_pos (adj_pos)
 		self.localplayer:set_velocity (v)
 		self.default_switchtime = t % ONE_TICK
-		mcl_localplayer.profile_done ("LocalPlayer physics")
+		profile_done ("LocalPlayer physics")
 	else
 		self.default_switchtime = t
 	end
 	self._was_jumping = control.jump
-	local root = mcl_localplayer.profile_done ("on_step")
+	local root = profile_done ("on_step")
 	mcl_localplayer.profiler_collect (root, dtime)
 end
 
@@ -1345,18 +1350,21 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 end
 
 function localplayer:pose_collides (self_pos, pose)
-	mcl_localplayer.profile ("LocalPlayer pose_collides")
+	profile ("LocalPlayer pose_collides")
 	local def = mcl_localplayer.pose_defs[pose]
 	local rc = def and core.collides (def.collisionbox, self_pos,
 					true, self.object, true)
-	mcl_localplayer.profile_done ("LocalPlayer pose_collides")
+	profile_done ("LocalPlayer pose_collides")
 	return rc
 end
 
 function localplayer:collides (self_pos, off_x, off_y, off_z, reject_grazing)
+	profile ("LocalPlayer collision detection")
 	local test_pos = vector.offset (self_pos, off_x, off_y, off_z)
-	return core.collides (self.collisionbox, test_pos,
+	local rc = core.collides (self.collisionbox, test_pos,
 				true, self.object, reject_grazing)
+	profile_done ("LocalPlayer collision detection")
+	return rc
 end
 
 function localplayer:desired_pose (self_pos, controls, params)
@@ -1392,6 +1400,7 @@ function localplayer:desired_pose (self_pos, controls, params)
 end
 
 function localplayer:apply_pose (pose)
+	profile ("LocalPlayer apply_pose")
 	local posedef = mcl_localplayer.pose_defs[pose]
 	if posedef then
 		self.object:set_property_overrides ({
@@ -1406,6 +1415,7 @@ function localplayer:apply_pose (pose)
 	end
 	mcl_localplayer.send_playerpose (pose)
 	self.pose = pose
+	profile_done ("LocalPlayer apply_pose")
 end
 
 function localplayer:desired_animation (controls, v)
@@ -1457,7 +1467,7 @@ function localplayer:rotate_non_redundantly (bone, rot_x, rot_y, rot_z)
 		return
 	end
 
-	mcl_localplayer.profile ("LocalPlayer set_bone_override")
+	profile ("LocalPlayer set_bone_override")
 	local v = OVERRIDE_TEMPLATE.rotation.vec
 	v.x = rot_x
 	v.y = rot_y
@@ -1470,7 +1480,7 @@ function localplayer:rotate_non_redundantly (bone, rot_x, rot_y, rot_z)
 	else
 		self._bone_overrides[bone] = vector.copy (v)
 	end
-	mcl_localplayer.profile_done ("LocalPlayer set_bone_override")
+	profile_done ("LocalPlayer set_bone_override")
 end
 
 local NOTHING = {}
@@ -1478,20 +1488,20 @@ local NOTHING = {}
 function localplayer:unrotate (bone)
 	local existing = self._bone_overrides[bone]
 	if existing then
-		mcl_localplayer.profile ("LocalPlayer set_bone_override")
+		profile ("LocalPlayer set_bone_override")
 		self.object:set_bone_override (bone, NOTHING)
 		self._bone_overrides[bone] = nil
-		mcl_localplayer.profile_done ("LocalPlayer set_bone_override")
+		profile_done ("LocalPlayer set_bone_override")
 	end
 end
 
 function localplayer:tick_animation (controls, dtime)
-	mcl_localplayer.profile ("LocalPlayer tick_animation")
+	profile ("LocalPlayer tick_animation")
 	local base = self.current_eye_height
 	local target = self.target_eye_height
 	local v = self.localplayer:get_velocity ()
 
-	mcl_localplayer.profile ("LocalPlayer animate eye height")
+	profile ("LocalPlayer animate eye height")
 	if base ~= target then
 		local t = math.min (self.eye_height_time + dtime, 0.20)
 		local v = vector.new (0, base + (target - base) * (t / 0.20), 0)
@@ -1502,9 +1512,9 @@ function localplayer:tick_animation (controls, dtime)
 		end
 		self.eye_height_time = t
 	end
-	mcl_localplayer.profile_done ("LocalPlayer animate eye height")
+	profile_done ("LocalPlayer animate eye height")
 
-	mcl_localplayer.profile ("LocalPlayer configure animation")
+	profile ("LocalPlayer configure animation")
 	local anim = self:desired_animation (controls, v)
 	if anim ~= self.animation then
 		local posedef = mcl_localplayer.pose_defs[self.pose]
@@ -1514,27 +1524,27 @@ function localplayer:tick_animation (controls, dtime)
 			mcl_localplayer.send_playeranim (anim)
 		end
 	end
-	mcl_localplayer.profile_done ("LocalPlayer configure animation")
+	profile_done ("LocalPlayer configure animation")
 
-	mcl_localplayer.profile ("LocalPlayer animate FOV")
+	profile ("LocalPlayer animate FOV")
 	-- Animate FOV.
 	if self.fov_factor ~= self.noticed_fov_factor then
 		local fov = DEFAULT_FOV * self.fov_factor
 		self.localplayer:set_fov (fov, false, 0.20)
 		self.noticed_fov_factor = self.fov_factor
 	end
-	mcl_localplayer.profile_done ("LocalPlayer animate FOV")
+	profile_done ("LocalPlayer animate FOV")
 
 	-- Animate body.
-	mcl_localplayer.profile ("LocalPlayer animate prologue")
-	local look_dir = core.camera:get_look_horizontal ()
+	profile ("LocalPlayer animate prologue")
+	local look_dir = self.last_yaw
 	local v = vector.normalize (v)
 	local move_yaw = (math.abs (v.z) < 0.35 and math.abs (v.x) < 0.35)
 		and self._last_move_yaw or math.atan2 (v.z, v.x) - math.pi / 2
-	mcl_localplayer.profile_done ("LocalPlayer animate prologue")
+	profile_done ("LocalPlayer animate prologue")
 
-	mcl_localplayer.profile ("LocalPlayer animate pose")
 	if self.pose == POSE_SWIMMING then
+		profile ("LocalPlayer animate POSE_SWIMMING")
 		local pitch = core.camera:get_look_vertical ()
 		local move_pitch = dir_to_pitch (v)
 		local norm_look_dir = norm_radians (look_dir)
@@ -1546,10 +1556,11 @@ function localplayer:tick_animation (controls, dtime)
 		local z = math.pi
 		self:rotate_non_redundantly ("Body_Control", x, y, z)
 		self._last_move_yaw = move_yaw
-		mcl_localplayer.profile_done ("LocalPlayer animate pose")
-		mcl_localplayer.profile_done ("LocalPlayer tick_animation")
+		profile_done ("LocalPlayer animate POSE_SWIMMING")
+		profile_done ("LocalPlayer tick_animation")
 		return
 	elseif self.pose == POSE_FALL_FLYING then
+		profile ("LocalPlayer animate POSE_FALL_FLYING")
 		local move_pitch = dir_to_pitch (v)
 		local xrot = move_pitch + FIFTY_DEG
 		local yrot = move_yaw - look_dir
@@ -1558,28 +1569,32 @@ function localplayer:tick_animation (controls, dtime)
 		local yrot = -move_yaw + norm_radians (look_dir)
 		self:rotate_non_redundantly ("Body_Control", xrot, yrot, math.pi)
 		self._last_move_yaw = move_yaw
-		mcl_localplayer.profile_done ("LocalPlayer animate pose")
-		mcl_localplayer.profile_done ("LocalPlayer tick_animation")
+		profile_done ("LocalPlayer animate POSE_FALL_FLYING")
+		profile_done ("LocalPlayer tick_animation")
 		return
 	elseif self.pose == POSE_SLEEPING then
+		profile ("LocalPlayer animate POSE_SLEEPING")
 		self:unrotate ("Head_Control")
 		self:rotate_non_redundantly ("Body_Control", 0, 0, 0)
-		mcl_localplayer.profile_done ("LocalPlayer animate pose")
-		mcl_localplayer.profile_done ("LocalPlayer tick_animation")
+		profile_done ("LocalPlayer animate POSE_SLEEPING")
+		profile_done ("LocalPlayer tick_animation")
 		return
 	elseif self.pose == POSE_DEATH then
+		profile ("LocalPlayer animate POSE_DEATH")
 		self:unrotate ("Head_Control")
 		self:unrotate ("Body_Control")
-		mcl_localplayer.profile_done ("LocalPlayer animate pose")
-		mcl_localplayer.profile_done ("LocalPlayer tick_animation")
+		profile_done ("LocalPlayer animate POSE_DEATH")
+		profile_done ("LocalPlayer tick_animation")
 		return
 	end
 
+	profile ("LocalPlayer animate default pose")
 	local move_yaw_lim = norm_radians (move_yaw)
 	local look_dir_new = norm_radians (look_dir)
 	local diff = norm_radians (move_yaw_lim - look_dir_new)
 
 	if self.pose == self.mount_pose then
+		profile ("LocalPlayer animate mount")
 		local attach = self.object:get_attach ()
 		if attach then
 			local yaw = attach:get_yaw ()
@@ -1588,6 +1603,7 @@ function localplayer:tick_animation (controls, dtime)
 			self:rotate_non_redundantly ("Body_Control", 0, 0, 0)
 			self:rotate_non_redundantly ("Head_Control", pitch, yrot, 0)
 		end
+		profile_done ("LocalPlayer animate mount")
 	else
 		if diff > FOURTY_DEG then
 			move_yaw_lim = look_dir_new + FOURTY_DEG
@@ -1602,8 +1618,8 @@ function localplayer:tick_animation (controls, dtime)
 		self:rotate_non_redundantly ("Head_Control", x, y, 0)
 	end
 
-	mcl_localplayer.profile_done ("LocalPlayer animate pose")
-	mcl_localplayer.profile ("LocalPlayer animate arm rotation")
+	profile_done ("LocalPlayer animate default pose")
+	profile ("LocalPlayer animate arm rotation")
 
 	-- Control arm rotation whilst blocking.
 	if self.blocking == 2 then
@@ -1640,8 +1656,8 @@ function localplayer:tick_animation (controls, dtime)
 		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", 0, 0, 0)
 		self:rotate_non_redundantly ("Arm_Left_Pitch_Control", 0, 0, 0)
 	end
-	mcl_localplayer.profile_done ("LocalPlayer animate arm rotation")
-	mcl_localplayer.profile_done ("LocalPlayer tick_animation")
+	profile_done ("LocalPlayer animate arm rotation")
+	profile_done ("LocalPlayer tick_animation")
 end
 
 function mcl_localplayer.do_posectrl (ctrlword)
