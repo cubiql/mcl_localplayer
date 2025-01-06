@@ -325,6 +325,11 @@ function mcl_localplayer.apply_rocket_use (num_secs)
 	localplayer.rocket_ticks = math.max (localplayer.rocket_ticks, ticks)
 end
 
+function localplayer:get_look_dir ()
+	local mode = core.camera:get_camera_mode ()
+	return core.camera:get_look_dir () * (mode ~= 2 and 1 or -1)
+end
+
 function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	profile ("LocalPlayer motion_step")
 	profile ("LocalPlayer motion_step prologue")
@@ -377,7 +382,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	end
 
 	if self.fall_flying then
-		local dir = core.camera:get_look_dir ()
+		local dir = self:get_look_dir ()
 		self:rocket_boost (dir, v)
 	end
 	profile_done ("LocalPlayer motion_step prologue")
@@ -492,7 +497,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 			self.fall_distance = 1.0
 		end
 
-		local dir = core.camera:get_look_dir ()
+		local dir = self:get_look_dir ()
 		local pitch = -core.camera:get_look_vertical ()
 		local horiz = math.sqrt (dir.x * dir.x + dir.z * dir.z)
 		local movement = math.sqrt (v.x * v.x + v.z * v.z)
