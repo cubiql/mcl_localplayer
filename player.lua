@@ -80,6 +80,7 @@ local localplayer = {
 	mount_pose = POSE_MOUNTED,
 	_bone_overrides = {},
 	last_yaw = 0.0,
+	animation_speed = nil,
 }
 mcl_localplayer.localplayer = localplayer
 
@@ -1442,20 +1443,26 @@ function localplayer:apply_pose (pose)
 	profile_done ("LocalPlayer apply_pose")
 end
 
+local DEFAULT_ANIMATION_SPEED = 30
+
 function localplayer:desired_animation (controls, v)
+	local speed = DEFAULT_ANIMATION_SPEED
+	if self.pose == POSE_CROUCHING or self.blocking ~= 0 then
+		speed = speed / 2
+	end
 	if math.abs (v.x) > 0.35 or math.abs (v.z) > 0.35 then
 		local is_using_bow = mcl_localplayer.is_using_bow_visually ()
 		if is_using_bow then
-			return "walk_bow"
+			return "walk_bow", speed
 		elseif controls.dig then
-			return "walk_mine"
+			return "walk_mine", speed
 		else
-			return "walk"
+			return "walk", speed
 		end
 	elseif controls.dig then
-		return "mine"
+		return "mine", speed
 	else
-		return "stand"
+		return "stand", speed
 	end
 end
 
@@ -1539,7 +1546,7 @@ function localplayer:tick_animation (controls, dtime)
 	profile_done ("LocalPlayer animate eye height")
 
 	profile ("LocalPlayer configure animation")
-	local anim = self:desired_animation (controls, v)
+	local anim, speed = self:desired_animation (controls, v)
 	if anim ~= self.animation then
 		local posedef = mcl_localplayer.pose_defs[self.pose]
 		self.animation = anim
@@ -1547,6 +1554,10 @@ function localplayer:tick_animation (controls, dtime)
 			self.object:set_animation (posedef[anim], 0.25)
 			mcl_localplayer.send_playeranim (anim)
 		end
+	end
+	if speed ~= self.animation_speed then
+		self.object:set_animation_frame_speed (speed)
+		self.animation_speed = speed
 	end
 	profile_done ("LocalPlayer configure animation")
 
