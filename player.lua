@@ -305,7 +305,7 @@ end
 local BASE_ROCKET_BOOST = 2.0
 local ROCKET_BOOST_FORCE = 30.0
 
-function localplayer:rocket_boost (dir, v)
+function localplayer:rocket_boost (self_pos, dir, v)
 	if self.rocket_ticks > 0 then
 		v.x = dir.x * BASE_ROCKET_BOOST
 			+ (dir.x * ROCKET_BOOST_FORCE - v.x) * 0.5
@@ -317,6 +317,18 @@ function localplayer:rocket_boost (dir, v)
 			+ (dir.z * ROCKET_BOOST_FORCE - v.z) * 0.5
 			+ v.z
 		self.rocket_ticks = self.rocket_ticks - 1
+		local dir = vector.new (dir.x, 0, dir.z)
+		local pos = vector.normalize (dir)
+		local s = pos.x
+		local c = pos.z
+		pos.x = self_pos.x + (c * 0.5 + s * 0.7)
+		pos.y = self_pos.y + 0.3
+		pos.z = self_pos.z + (c * 0.7 - s * 0.5)
+		core.add_particle ({
+			pos = pos,
+			expirationtime = 1.0,
+			texture = "mcl_bows_rocket_particle.png^[colorize:#bc7a57:127",
+		})
 	end
 end
 
@@ -383,7 +395,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 
 	if self.fall_flying then
 		local dir = self:get_look_dir ()
-		self:rocket_boost (dir, v)
+		self:rocket_boost (self_pos, dir, v)
 	end
 	profile_done ("LocalPlayer motion_step prologue")
 
