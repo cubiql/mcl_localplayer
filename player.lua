@@ -383,7 +383,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	local velocity_factor = 1.0
 	local liquidtype = self._last_liquidtype
 
-	if standon and standon._mcl_velocity_factor then
+	if standon and standon._mcl_velocity_factor and touching_ground then
 		velocity_factor = standon._mcl_velocity_factor
 	end
 	self.jump_timer = self.jump_timer - 1
