@@ -6,9 +6,9 @@ prediction for a number of gameplay elements (such as bows and
 sprinting), client-side mob and boat driving, and a player physics
 engine that reproduces the laws of physics of Minecraft.
 
-At the present time, it must be installed in combination with a
-modified version of Mineclonia and one of Minetest compiled from
-source code, which are linked in the repo description.
+At the present time, it must be installed in combination with the
+latest development version of Mineclonia and one of Minetest compiled
+from source code, which are linked in the repo description.
 
 Once installed to the `~/.minetest/clientmods' directory, this
 client-side mod must be enabled by inserting:
