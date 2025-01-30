@@ -81,6 +81,7 @@ local localplayer = {
 	_bone_overrides = {},
 	last_yaw = 0.0,
 	animation_speed = nil,
+	_water_current = vector.zero (),
 }
 mcl_localplayer.localplayer = localplayer
 
@@ -97,6 +98,8 @@ local LAVA_SPEED		= 0.4
 local BASE_SLIPPERY		= 0.98
 local BASE_FRICTION		= 0.6
 local LIQUID_FORCE		= 0.28
+local LAVA_FORCE		= 0.09
+local LAVA_FORCE_NETHER		= 0.14
 local BASE_FRICTION3		= math.pow (0.6, 3)
 local LIQUID_JUMP_FORCE		= 0.8
 local ONE_TICK			= 0.05
@@ -195,7 +198,7 @@ local EMPTY_NODE = {
 	groups = {},
 }
 
-local function check_one_immersion_depth (node, base_y, pos)
+local function check_one_immersion_depth (node, base_y, pos, current, dimension)
 	local def = node and mcl_localplayer.node_defs [node.name] or nil
 	local liquid_type = def and (def.liquidtype or def._liquidtype)
 	if liquid_type and liquid_type ~= "none" then
@@ -206,38 +209,67 @@ local function check_one_immersion_depth (node, base_y, pos)
 			height = 1.0
 		end
 		if pos.y + height - 0.5 > base_y then
-			return ((pos.y - 0.5) + height - base_y),
-				(def.groups.lava and "lava" or "water")
+			local depth = ((pos.y - 0.5) + height - base_y)
+			-- Integrate liquid current.
+
+			local v = miniflowlib.quick_flow (pos, node)
+
+			if depth < 0.4 then
+				v.x = v.x * depth
+				v.y = v.y * depth
+				v.z = v.z * depth
+			end
+
+			local fluidtype
+			if def.groups.lava then
+				fluidtype = "lava"
+				local force = dimension == "nether"
+					and LAVA_FORCE_NETHER or LAVA_FORCE
+				current.x = current.x + v.x * force
+				current.y = current.y + v.y * force
+				current.z = current.y + v.z * force
+			else
+				fluidtype = "water"
+				current.x = current.x + v.x * LIQUID_FORCE
+				current.y = current.y + v.y * LIQUID_FORCE
+				current.z = current.y + v.z * LIQUID_FORCE
+			end
+			return depth, fluidtype
 		end
 	end
 	return 0.0, nil
 end
 
+mcl_localplayer.check_one_immersion_depth = check_one_immersion_depth
+
 function localplayer:check_water_flow (self_pos)
-	local node, nn, def
-	node = minetest.get_node_or_nil (self_pos)
-	if node then
-		nn = node.name
-		def = mcl_localplayer.node_defs[nn]
-	end
-	-- Move item around on flowing liquids
-	if def and (def.liquidtype == "flowing"
-			or def._liquid_type == "flowing") then
-		-- Get flowing direction (function call from flowlib),
-		-- if there's a liquid.  NOTE: According to
-		-- Qwertymine, flowlib.quickflow is only reliable for
-		-- liquids with a flowing distance of 7.  Luckily,
-		-- this is exactly what we need if we only care about
-		-- water, which has this flowing distance.
-		local vec = miniflowlib.quick_flow (self_pos, node)
-		return vec
-	end
-	return nil
+	local current = self._water_current
+	return current
 end
 
 function mcl_localplayer.get_node_def (name)
 	return mcl_localplayer.node_defs[name]
 end
+
+local mg_overworld_min = -128
+local mg_nether_min = -29067
+local mg_nether_max = mg_nether_min + 128
+local mg_end_min = -27073
+local mg_end_max = mg_overworld_min - 2000
+
+local function y_to_dimension (y)
+	if y >= mg_overworld_min then
+		return "overworld"
+	elseif y >= mg_nether_min and y <= mg_nether_max + 128 then
+		return "nether"
+	elseif y >= mg_end_min and y <= mg_end_max then
+		return "end"
+	else
+		return "void"
+	end
+end
+
+mcl_localplayer.y_to_dimension = y_to_dimension
 
 function localplayer:check_standin (pos, params)
 	profile ("LocalPlayer check_standin")
@@ -264,7 +296,12 @@ function localplayer:check_standin (pos, params)
 	local immersion_depth = 0.0
 	local worst_type = nil
 	local v = vector.new (0, 0, 0)
-
+	local current = self._water_current
+	current.x = 0
+	current.y = 0
+	current.z = 0
+	local n_fluids = 0
+	local dimension = y_to_dimension (pos.y)
 
 	for y = y0, y1 do
 		for x = x0, x1 do
@@ -274,11 +311,16 @@ function localplayer:check_standin (pos, params)
 				v.z = z
 				local node = core.get_node_or_nil (v)
 				local depth, liquidtype
-					= check_one_immersion_depth (node, pos.y, v)
-				immersion_depth = math.max (depth, immersion_depth)
-				if liquidtype and worst_type ~= "lava" then
-					worst_type = liquidtype
+					= check_one_immersion_depth (node, pos.y, v,
+								     current, dimension)
+				if liquidtype then
+					n_fluids = n_fluids + 1
+
+					if worst_type ~= "lava" then
+						worst_type = liquidtype
+					end
 				end
+				immersion_depth = math.max (depth, immersion_depth)
 				if node then
 					local factors = self.movement_arresting_nodes[node.name]
 					if factors then
@@ -287,6 +329,11 @@ function localplayer:check_standin (pos, params)
 				end
 			end
 		end
+	end
+	if n_fluids > 0 then
+		current.x = current.x / n_fluids
+		current.y = current.y / n_fluids
+		current.z = current.z / n_fluids
 	end
 	profile_done ("LocalPlayer check_standin")
 	return immersion_depth, worst_type
@@ -451,12 +498,13 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 			end
 		end
 
+		-- Apply water current.
 		if water_vec and (water_vec.x >= 0
 					or water_vec.y >= 0
 					or water_vec.z >= 0) then
-			v.x = v.x + water_vec.x * LIQUID_FORCE
-			v.y = v.y + water_vec.y * LIQUID_FORCE
-			v.z = v.z + water_vec.z * LIQUID_FORCE
+			v.x = v.x + water_vec.x
+			v.y = v.y + water_vec.y
+			v.z = v.z + water_vec.z
 		end
 
 		-- If colliding horizontally within water, detect
@@ -476,6 +524,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		profile_done ("LocalPlayer water movement")
 	elseif liquidtype == "lava" then
 		profile ("LocalPlayer lava movement")
+		local lava_vec = self:check_water_flow (self_pos)
 		local speed = LAVA_SPEED
 		local r = LAVA_FRICTION
 		local fv_x, fv_y, fv_z
@@ -485,6 +534,15 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		v.z = v.z * r + fv_z
 		v.y = v.y + (gravity / 4.0)
 		v.y = v.y + fv_y
+
+		-- Apply lava current.
+		if lava_vec and (lava_vec.x >= 0
+					or lava_vec.y >= 0
+					or lava_vec.z >= 0) then
+			v.x = v.x + lava_vec.x
+			v.y = v.y + lava_vec.y
+			v.z = v.z + lava_vec.z
+		end
 
 		-- If colliding horizontally within lava,
 		-- detect whether the result of this movement
@@ -709,7 +767,7 @@ function localplayer:crouch_reduce_velocity (v, self_pos)
 end
 
 function localplayer:may_sprint (controls)
-	return self.can_sprint	
+	return self.can_sprint
 		and controls.movement_y > 0
 		and self.pose ~= POSE_FALL_FLYING
 		and not mcl_localplayer.is_using_bow ()
@@ -1907,4 +1965,3 @@ end
 function mcl_localplayer.is_creative_enabled ()
 	return localplayer.gamemode == "creative"
 end
-
