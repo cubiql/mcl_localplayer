@@ -44,6 +44,7 @@ local mob_table = {
 }
 
 function mob_table:on_activate ()
+	self._water_current = vector.zero ()
 end
 
 function mob_table:on_deactivate ()
