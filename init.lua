@@ -1,5 +1,6 @@
 mcl_localplayer = {
 	debug = false,
+	item_defs = {},
 }
 local modname = core.get_current_modname ()
 print ("*** Loading Mineclonia CSM")
@@ -164,7 +165,7 @@ dofile (minetest.get_modpath (modname) .. "/mount.lua")
 -- Client-server communication.
 ------------------------------------------------------------------------
 
-local PROTO_VERSION = 0
+local PROTO_VERSION = 1
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'
@@ -181,6 +182,8 @@ local SERVERBOUND_REFUSE_VEHICLE = 'ak'
 local SERVERBOUND_MOVE_VEHICLE = 'al'
 local SERVERBOUND_CONFIGURE_VEHICLE = 'am'
 local SERVERBOUND_TURN_VEHICLE = 'an'
+local SERVERBOUND_SHIELDCTRL = 'ao' -- Protocol version 1.
+local SERVERBOUND_EAT_ITEM = 'ap'
 
 -- Clientbound messages.
 local CLIENTBOUND_HELLO = 'AA'
@@ -199,6 +202,8 @@ local CLIENTBOUND_VEHICLE_POSITION = 'AM'
 local CLIENTBOUND_RESCIND_VEHICLE = 'AN'
 local CLIENTBOUND_VEHICLE_CAPABILITIES = 'AO'
 local CLIENTBOUND_KNOCKBACK = 'AP'
+local CLIENTBOUND_OFFHAND_ITEM = 'AQ' -- Protocol version 1.
+local CLIENTBOUND_PLAYER_VITALS = 'AR'
 
 -- Payload parameters.
 local MAX_PAYLOAD = 65533
@@ -274,6 +279,25 @@ function mcl_localplayer.send_turn_vehicle (id, tsc, yaw)
 	mcl_localplayer.send (payload)
 end
 
+function mcl_localplayer.send_shieldctrl (blocking)
+	local payload = SERVERBOUND_SHIELDCTRL
+		.. blocking
+	mcl_localplayer.send (payload)
+end
+
+function mcl_localplayer.send_eat_item (stack, index)
+	local payload = core.write_json ({
+		stack = stack:to_string (),
+		index = index,
+	})
+
+	if #payload > MAX_PAYLOAD then
+		print ("WARNING: eating excessively large item")
+		return
+	end
+	mcl_localplayer.send (SERVERBOUND_EAT_ITEM .. payload)
+end
+
 ------------------------------------------------------------------------
 -- Connection initialization.
 ------------------------------------------------------------------------
@@ -336,9 +360,41 @@ local function process_clientbound_hello (payload)
 					end
 				end
 				mcl_localplayer.init_bows (handshake.bow_info)
-				mcl_localplayer.proto = handshake.proto_version
+				mcl_localplayer.proto = handshake.proto
 				mcl_localplayer.node_defs = handshake.node_definitions
 				mcl_localplayer.pose_defs = {}
+
+				if handshake.proto >= 1 then -- Item use criteria.
+					if type (handshake.item_defs) ~= "table" then
+						error ("Malformed handshake.item_defs")
+					end
+					for k, v in pairs (handshake.item_defs) do
+						if type (k) ~= "string" then
+							error ("Malformed handshake.item_defs")
+						end
+
+						if type (v) ~= "table" and type (v) ~= "string" then
+							error ("Malformed handshake.item_defs")
+						end
+
+						if type (v) == "table" then
+							for name, class in pairs (v) do
+								if type (name) ~= "string" then
+									error ("Malformed item/object name"
+									       .. " in usability list")
+								end
+								if type (class) ~= "string" then
+									error ("Malformed class in usability list")
+								end
+							end
+						else
+							if not handshake.item_defs[v] then
+								error ("Alias " .. v .. " is absent")
+							end
+						end
+					end
+					mcl_localplayer.item_defs = handshake.item_defs
+				end
 
 				-- Initialize the CSM.
 				print ("*** Mineclonia client-side mod initialized")
@@ -478,6 +534,12 @@ local function receive_modchannel_message (channel_name, sender, message)
 				end
 				local v = vector.new (x, y, z)
 				mcl_localplayer.handle_knockback (v)
+			elseif msgtype == CLIENTBOUND_OFFHAND_ITEM then
+				local stack = ItemStack (payload)
+				mcl_localplayer.handle_offhand_item (stack)
+			elseif msgtype == CLIENTBOUND_PLAYER_VITALS then
+				local payload = core.parse_json (payload)
+				mcl_localplayer.handle_player_vitals (payload)
 			end
 		end
 	end

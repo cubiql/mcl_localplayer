@@ -1,4 +1,225 @@
 ------------------------------------------------------------------------
+-- Wielditem placement.
+------------------------------------------------------------------------
+
+local function get_placement_class_1 (item, name_of_pointed_thing)
+	local itemname = type (item) == "string"
+		and item
+		or (item:is_empty () and "default" or item:get_name ())
+	local place_def = mcl_localplayer.item_defs[itemname]
+	while type (place_def) == "string" do
+		place_def = mcl_localplayer.item_defs[place_def]
+	end
+
+	if place_def then
+		local special_type = place_def[name_of_pointed_thing]
+		if not special_type and place_def.inherit then
+			special_type
+				= get_placement_class_1 (place_def.inherit,
+							 name_of_pointed_thing)
+		end
+
+		return special_type or place_def.default
+	end
+
+	return nil
+end
+
+local function get_placement_class (item, name_of_pointed_thing)
+	local class = get_placement_class_1 (item, name_of_pointed_thing)
+		or "undefined"
+
+	if class == "food" then
+		-- If it is not permissible to eat at present and the
+		-- class is `food', return `undefined' in order that
+		-- the offhand item may be selected if one exists.
+
+		local _, hunger, _ = mcl_localplayer.get_player_vitals ()
+		if hunger >= 20 and not mcl_localplayer.is_creative_enabled () then
+			return "undefined"
+		end
+	end
+	return class
+end
+
+local localplayer = mcl_localplayer.localplayer
+local item_being_placed = nil
+local offhand_placed = false
+local item_class = nil
+local item_use_time = 0.0
+
+function mcl_localplayer.handle_offhand_item (stack)
+	localplayer.offhand_item = stack
+
+	if mcl_localplayer.debug then
+		print ("  New offhand item: " .. stack:to_string ())
+	end
+
+	if offhand_placed and item_being_placed
+		and not stack:equals (item_being_placed) then
+		mcl_localplayer.unuse_item ()
+	end
+end
+
+function mcl_localplayer.use_item_locally (itemstack, class, offhand)
+	if item_being_placed then
+		mcl_localplayer.unuse_item ()
+	end
+
+	if class == "shield" then
+		if not offhand then
+			mcl_localplayer.send_shieldctrl (2)
+			localplayer.blocking = 2
+		else
+			mcl_localplayer.send_shieldctrl (1)
+			localplayer.blocking = 1
+		end
+	elseif class == "food" then
+		local _, hunger, _ = mcl_localplayer.get_player_vitals ()
+		if offhand or (hunger >= 20
+				and not mcl_localplayer.is_creative_enabled ()) then
+			return false
+		end
+	elseif class == "bow"
+		or class == "food_edible_whilst_full" then
+		if offhand then
+			return false
+		end
+	end
+
+	item_being_placed = itemstack
+	item_class = class
+	item_use_time = 0.0
+	offhand_placed = offhand
+	return true
+end
+
+function mcl_localplayer.unuse_item ()
+	item_being_placed = nil
+
+	if item_class == "shield" then
+		mcl_localplayer.send_shieldctrl (0)
+		localplayer.blocking = 0
+	end
+
+	item_class = nil
+	item_use_time = 0.0
+end
+
+function mcl_localplayer.intercept_wielditem_placement (item, pointed_thing)
+	local control = core.localplayer:get_control ()
+	local offhand = false
+	if mcl_localplayer.proto < 1 then
+		return false
+	elseif pointed_thing.type == "node" and not control.sneak then
+		local node = core.get_node_or_nil (pointed_thing.under)
+		if node then
+			local name = node.name
+			local class = get_placement_class (item, name)
+			if class == "default" then
+				return false
+			elseif class == "undefined" then
+				-- What about the offhand item?
+				class = get_placement_class (localplayer.offhand_item, name)
+				if class == "default" or class == "undefined" then
+					return false
+				end
+				item = localplayer.offhand_item
+				offhand = true
+			end
+
+			return mcl_localplayer.use_item_locally (item, class, offhand)
+		end
+	elseif pointed_thing.type == "object" and not control.sneak then
+		local name = pointed_thing.ref:get_name ()
+		if name then
+			local class = get_placement_class (item, name)
+			if class == "default" then
+				return false
+			elseif class == "undefined" then
+				-- What about the offhand item?
+				class = get_placement_class (localplayer.offhand_item, name)
+				if class == "default" or class == "undefined" then
+					return false
+				end
+				item = localplayer.offhand_item
+				offhand = true
+			end
+
+			return mcl_localplayer.use_item_locally (item, class, offhand)
+		end
+	else
+		local class = get_placement_class (item, "default")
+		if class == "default" then
+			return false
+		elseif class == "undefined" then
+			class = get_placement_class (localplayer.offhand_item, "default")
+			if class == "default" or class == "undefined" then
+				return false
+			end
+			item = localplayer.offhand_item
+			offhand = true
+		end
+
+		if offhand and control.sneak then
+			return false
+		end
+
+		return mcl_localplayer.use_item_locally (item, class, offhand)
+	end
+end
+
+------------------------------------------------------------------------
+-- Wieldmesh animations.  Eating, crossbows, and the like.
+------------------------------------------------------------------------
+
+local FOOD_POSITION = vector.new (0, -30, 55)
+local FOOD_ROTATION = vector.new (-30, 10, 10)
+local NORMAL_EAT_DELAY = 1.6
+
+local wieldmesh_overridden = false
+
+local function animate_wieldmesh (dtime)
+	item_use_time = item_use_time + dtime
+
+	if item_class == "food" or item_class == "food_edible_whilst_full" then
+		local stack = item_being_placed
+		if not wieldmesh_overridden then
+			core.camera:override_wieldmesh (FOOD_POSITION,
+							FOOD_ROTATION,
+							0.1 - item_use_time)
+		end
+
+		local time = math.max (0, item_use_time - 0.1)
+
+		if time > 0 then
+			local offset = math.sin (time * math.pi / 0.1) * 5.0
+			local pos = vector.offset (FOOD_POSITION, 0, offset, 0)
+			core.camera:override_wieldmesh (pos, FOOD_ROTATION, 0.0)
+		end
+
+		wieldmesh_overridden = true
+
+		if item_use_time >= NORMAL_EAT_DELAY
+			or (stack:get_name () == "mcl_ocean:dried_kelp"
+				and item_use_time >= NORMAL_EAT_DELAY * 0.5) then
+			local index = core.localplayer:get_wield_index () + 1
+			item_use_time = 0.0
+			core.camera:reset_wieldmesh_override (0.0)
+			mcl_localplayer.send_eat_item (item_being_placed, index)
+		end
+	elseif wieldmesh_overridden then
+		wieldmesh_overridden = false
+		core.camera:reset_wieldmesh_override (0.0)
+	end
+end
+
+function mcl_localplayer.is_using_food ()
+	return item_class == "food"
+		or item_class == "food_edible_whilst_full"
+end
+
+------------------------------------------------------------------------
 -- Usable wielditems, in particular, bows.
 ------------------------------------------------------------------------
 
@@ -56,9 +277,48 @@ local BOW_FOV_FACTOR = "mcl_localplayer:bow_fov_factor"
 
 function mcl_localplayer.item_globalstep (dtime)
 	local stack = core.localplayer:get_wielded_item ()
+	-- Read player controls.
+	local controls = core.localplayer:get_control ()
+	local allow_bows = mcl_localplayer.proto < 1
+
+	if item_being_placed then
+		allow_bows = not offhand_placed and item_class == "bow"
+
+		if (not offhand_placed
+			and not stack:equals (item_being_placed))
+			or not controls.place then
+			-- Allow uninterrupted eating of a single
+			-- stack of food.
+			local old_name = item_being_placed:get_name ()
+			local old_count = item_being_placed:get_count ()
+			if (item_class ~= "food"
+			    and item_class ~= "food_edible_whilst_full")
+				or old_name ~= stack:get_name ()
+				or old_count ~= (stack:get_count () + 1) then
+				mcl_localplayer.unuse_item ()
+			else
+				item_being_placed = stack
+			end
+		end
+
+		if item_class == "food" then
+			local _, hunger, _
+				= mcl_localplayer.get_player_vitals ()
+			if hunger >= 20 then
+				mcl_localplayer.unuse_item ()
+			end
+		end
+	end
+
+	animate_wieldmesh (dtime)
+
 	local index = core.localplayer:get_wield_index () + 1
 	local name = stack:get_name ()
 	local info = is_bow[name]
+
+	if not allow_bows and use_time == 0 then
+		return
+	end
 
 	if name ~= current_wielditem.name or index ~= current_wielditem.slot then
 		local old_stack = current_wielditem.slot
@@ -94,8 +354,6 @@ function mcl_localplayer.item_globalstep (dtime)
 			and not mcl_localplayer.is_creative_enabled () then
 			use_time = 0
 		else
-			-- Read player controls.
-			local controls = core.localplayer:get_control ()
 			if controls.place then
 				use_time = use_time + dtime
 			else
@@ -193,9 +451,11 @@ end)
 core.register_on_item_place (function (item, pointed_thing)
 	if mcl_localplayer.localplayer_initialized then
 		local name = item:get_name ()
-		if is_bow[name] then
+		if is_bow[name] and mcl_localplayer.proto < 1 then
 			return true
 		end
+
+		return mcl_localplayer.intercept_wielditem_placement (item, pointed_thing)
 	end
 	return false
 end)

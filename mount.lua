@@ -126,7 +126,6 @@ function mob_table:check_standin (pos, params)
 end
 
 function mob_table:check_water_flow (self_pos)
-	local v = check_water_flow_scratch
 	return self._water_current
 end
 

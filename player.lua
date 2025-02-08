@@ -82,6 +82,10 @@ local localplayer = {
 	last_yaw = 0.0,
 	animation_speed = nil,
 	_water_current = vector.zero (),
+	offhand_item = ItemStack (),
+	health = 20,
+	hunger = 20,
+	saturation = 20,
 }
 mcl_localplayer.localplayer = localplayer
 
@@ -1156,12 +1160,13 @@ function localplayer.on_step (dtime, moveresult, params)
 	self.jumping = control.jump
 
 	-- Apply acceleration.
-	-- Slow down players using shields or bows.  TODO: the bows.
+	-- Slow down players using shields or bows.
 	local base = self.blocking ~= 0 and 0.2 or 1.0
 	local moving_slowly = self.pose == POSE_CROUCHING
 		or (self.pose == POSE_SWIMMING
 		    and self._immersion_depth <= 0)
 		or mcl_localplayer.is_using_bow ()
+		or mcl_localplayer.is_using_food ()
 
 	if moving_slowly then
 		local factor = math.min (PLAYER_CROUCH_FACTOR + self.sneak_speed_bonus, 1.0)
@@ -1760,6 +1765,9 @@ function mcl_localplayer.do_posectrl (ctrlword)
 end
 
 function mcl_localplayer.do_shieldctrl (ctrlword)
+	if mcl_localplayer.proto >= 1 then
+		error ("Did not expect server to dictate shield activation state")
+	end
 	localplayer.blocking = ctrlword
 end
 
@@ -1964,4 +1972,22 @@ end
 
 function mcl_localplayer.is_creative_enabled ()
 	return localplayer.gamemode == "creative"
+end
+
+------------------------------------------------------------------------
+-- Player vitals.
+------------------------------------------------------------------------
+
+function mcl_localplayer.handle_player_vitals (payload)
+	assert (type (payload.hp) == "number")
+	assert (type (payload.hunger) == "number")
+	assert (type (payload.saturation) == "number")
+
+	localplayer.health = payload.hp
+	localplayer.hunger = payload.hunger
+	localplayer.saturation = payload.saturation
+end
+
+function mcl_localplayer.get_player_vitals ()
+	return localplayer.health, localplayer.hunger, localplayer.saturation
 end
