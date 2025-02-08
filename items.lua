@@ -304,7 +304,8 @@ function mcl_localplayer.item_globalstep (dtime)
 		if item_class == "food" then
 			local _, hunger, _
 				= mcl_localplayer.get_player_vitals ()
-			if hunger >= 20 then
+			if hunger >= 20
+				and not mcl_localplayer.is_creative_enabled () then
 				mcl_localplayer.unuse_item ()
 			end
 		end
