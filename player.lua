@@ -391,7 +391,9 @@ end
 
 function localplayer:get_look_dir ()
 	local mode = core.camera:get_camera_mode ()
-	return core.camera:get_look_dir () * (mode ~= 2 and 1 or -1)
+	-- CAMERA_MODE_ANY displaces the remaining camera modes by 1
+	-- which is not reflected in client_lua_api.md.
+	return core.camera:get_look_dir () * (mode ~= 3 and 1 or -1)
 end
 
 function localplayer:motion_step (v, self_pos, moveresult, controls, params)
@@ -1540,8 +1542,8 @@ local function dir_to_pitch (dir)
 	return -math.atan2 (-dir.y, xz)
 end
 
-local RIGHT_ARM_BLOCKING_OVERRIDE = vector.new (20, -20, 0):apply (math.rad)
-local LEFT_ARM_BLOCKING_OVERRIDE = vector.new (20, 20, 0):apply (math.rad)
+local RIGHT_ARM_BLOCKING_OVERRIDE = vector.new (-160, -20, 0):apply (math.rad)
+local LEFT_ARM_BLOCKING_OVERRIDE = vector.new (-160, 20, 0):apply (math.rad)
 
 local OVERRIDE_TEMPLATE = {
 	rotation = {
@@ -1673,7 +1675,7 @@ function localplayer:tick_animation (controls, dtime)
 	elseif self.pose == POSE_SLEEPING then
 		profile ("LocalPlayer animate POSE_SLEEPING")
 		self:unrotate ("Head_Control")
-		self:rotate_non_redundantly ("Body_Control", 0, 0, 0)
+		self:rotate_non_redundantly ("Body_Control", 0, math.pi, 0)
 		profile_done ("LocalPlayer animate POSE_SLEEPING")
 		profile_done ("LocalPlayer tick_animation")
 		return
@@ -1698,7 +1700,7 @@ function localplayer:tick_animation (controls, dtime)
 			local yaw = attach:get_yaw ()
 			local yrot = -norm_radians (look_dir - norm_radians (yaw))
 			local pitch = core.camera:get_look_vertical ()
-			self:rotate_non_redundantly ("Body_Control", 0, 0, 0)
+			self:rotate_non_redundantly ("Body_Control", 0, math.pi, 0)
 			self:rotate_non_redundantly ("Head_Control", pitch, yrot, 0)
 		end
 		profile_done ("LocalPlayer animate mount")
@@ -1709,7 +1711,7 @@ function localplayer:tick_animation (controls, dtime)
 			move_yaw_lim = look_dir_new - FOURTY_DEG
 		end
 		self._last_move_yaw = move_yaw_lim
-		local body = look_dir_new - move_yaw_lim
+		local body = look_dir_new - move_yaw_lim - math.pi
 		self:rotate_non_redundantly ("Body_Control", 0, body, 0)
 		local y = move_yaw_lim - look_dir_new
 		local x = core.camera:get_look_vertical ()
@@ -1731,7 +1733,7 @@ function localplayer:tick_animation (controls, dtime)
 	elseif self.blocking == 1 then
 		self:unrotate ("Arm_Right")
 		self:rotate_non_redundantly ("Arm_Left", 0, 0, 0)
-		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", 0, 0, 0)
+		self:unrotate ("Arm_Right_Pitch_Control")
 		self:rotate_non_redundantly ("Arm_Left_Pitch_Control",
 					LEFT_ARM_BLOCKING_OVERRIDE.x,
 					LEFT_ARM_BLOCKING_OVERRIDE.y,
@@ -1740,8 +1742,10 @@ function localplayer:tick_animation (controls, dtime)
 		self:rotate_non_redundantly ("Arm_Right", 0, 0, 0)
 		self:rotate_non_redundantly ("Arm_Left", 0, 0, 0)
 		local pitch = math.deg (core.camera:get_look_vertical ())
-		local right_arm_rot = vector.new (pitch + 90, -30, pitch * -1 * .35):apply (math.rad)
-		local left_arm_rot = vector.new (pitch + 90, 43, pitch * 0.35):apply (math.rad)
+		local right_arm_rot
+			= vector.new (pitch + 90 - 180, -30, pitch * -1 * .35):apply (math.rad)
+		local left_arm_rot
+			= vector.new (pitch + 90 - 180, 43, pitch * 0.35):apply (math.rad)
 		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", right_arm_rot.x,
 					right_arm_rot.y,
 					right_arm_rot.z)
@@ -1751,8 +1755,8 @@ function localplayer:tick_animation (controls, dtime)
 	else
 		self:unrotate ("Arm_Right")
 		self:unrotate ("Arm_Left")
-		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", 0, 0, 0)
-		self:rotate_non_redundantly ("Arm_Left_Pitch_Control", 0, 0, 0)
+		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", math.pi, 0, 0)
+		self:rotate_non_redundantly ("Arm_Left_Pitch_Control", math.pi, 0, 0)
 	end
 	profile_done ("LocalPlayer animate arm rotation")
 	profile_done ("LocalPlayer tick_animation")
