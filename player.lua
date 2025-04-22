@@ -727,7 +727,7 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 end
 
 function localplayer:check_crouch_axis_x (self_pos, x)
-	while x ~= 0 and not self:collides (self_pos, x * ONE_TICK, -0.6, 0) do
+	while x ~= 0 and not self:collides (self_pos, x * 0.1, -0.6, 0) do
 		if x > 0 then
 			x = math.max (0, x - ONE_TICK)
 		else
@@ -738,7 +738,7 @@ function localplayer:check_crouch_axis_x (self_pos, x)
 end
 
 function localplayer:check_crouch_axis_z (self_pos, z)
-	while z ~= 0 and not self:collides (self_pos, 0, -0.6, z * ONE_TICK) do
+	while z ~= 0 and not self:collides (self_pos, 0, -0.6, z * 0.1) do
 		if z > 0 then
 			z = math.max (0, z - ONE_TICK)
 		else
@@ -749,7 +749,7 @@ function localplayer:check_crouch_axis_z (self_pos, z)
 end
 
 function localplayer:check_crouch_axis_both (self_pos, x, z)
-	while x ~= 0 and not self:collides (self_pos, x * ONE_TICK, -0.6, z * ONE_TICK) do
+	while x ~= 0 and not self:collides (self_pos, x * ONE_TICK, -0.6, z * 0.1) do
 		if x > 0 then
 			x = math.max (0, x - ONE_TICK)
 		elseif x < 0 then
