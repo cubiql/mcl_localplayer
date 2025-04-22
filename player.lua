@@ -1063,6 +1063,8 @@ function localplayer.on_step (dtime, moveresult, params)
 	local mount = self.object:get_attach ()
 	mcl_localplayer.update_mounting (mount)
 	if mount then
+		self._immersion_depth = 0
+		self.liquidtype = nil
 		self.fall_distance = 0.0
 		self.last_fall_y = nil
 		self.localplayer:set_touching_ground (nil)
