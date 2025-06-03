@@ -99,6 +99,7 @@ local WATER_DRAG		= 0.8
 local SPRINTING_WATER_DRAG	= 0.9
 local LAVA_FRICTION		= 0.5
 local LAVA_SPEED		= 0.4
+local BASE_SLIPPERY_1		= 0.989
 local BASE_SLIPPERY		= 0.98
 local BASE_FRICTION		= 0.6
 local LIQUID_FORCE		= 0.28
@@ -622,7 +623,11 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 		-- order to avoid a marked disparity in the speed of
 		-- mobs that jump while in motion or walk off ledges.
 		if was_touching_ground and slippery and slippery > 0 then
-			friction = BASE_SLIPPERY
+			if slippery > 3 then
+				friction = BASE_SLIPPERY_1
+			else
+				friction = BASE_SLIPPERY
+			end
 		elseif was_touching_ground then
 			friction = BASE_FRICTION
 		else

@@ -356,6 +356,7 @@ local DOLPHIN_GRANTED_FRICTION	= 0.96
 local WATER_DRAG		= 0.8
 local LAVA_FRICTION		= 0.5
 local LAVA_SPEED		= 0.4
+local BASE_SLIPPERY_1		= 0.989
 local BASE_SLIPPERY		= 0.98
 local BASE_FRICTION		= 0.6
 local BASE_FRICTION3		= math.pow (0.6, 3)
@@ -528,7 +529,11 @@ function mob_table:motion_step (v, self_pos, moveresult, controls, params)
 		-- order to avoid a marked disparity in the speed of
 		-- mobs that jump while in motion or walk off ledges.
 		if was_touching_ground and slippery and slippery > 0 then
-			friction = BASE_SLIPPERY
+			if slippery > 3 then
+				friction = BASE_SLIPPERY_1
+			else
+				friction = BASE_SLIPPERY
+			end
 		elseif was_touching_ground then
 			friction = BASE_FRICTION
 		else
