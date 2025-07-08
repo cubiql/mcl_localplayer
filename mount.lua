@@ -193,7 +193,7 @@ function mob_table:test_collision (self_pos, moveresult, v)
 
 	-- Enable or disable stepheight according as this mob is
 	-- colliding with the ground.
-	self:toggle_step_height (not not self.touching_ground)
+	self:toggle_step_height (moveresult.touching_ground)
 end
 
 local touching_only_ignore = mcl_localplayer.touching_only_ignore
