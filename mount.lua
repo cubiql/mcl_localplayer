@@ -596,6 +596,8 @@ function mob_table:motion_step (v, self_pos, moveresult, controls, params)
 				self.jump_timer = 10
 			end
 		end
+	else
+		self.jump_timer = 0
 	end
 
 	if climbable then
