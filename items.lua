@@ -317,10 +317,6 @@ function mcl_localplayer.item_globalstep (dtime)
 	local name = stack:get_name ()
 	local info = is_bow[name]
 
-	if not allow_bows and use_time == 0 then
-		return
-	end
-
 	if name ~= current_wielditem.name or index ~= current_wielditem.slot then
 		local old_stack = current_wielditem.slot
 		if old_stack then
@@ -348,6 +344,12 @@ function mcl_localplayer.item_globalstep (dtime)
 				mcl_localplayer.send_visual_wielditem ("")
 			end
 		end
+	end
+
+	mcl_localplayer.check_spyglass ()
+
+	if not allow_bows and use_time == 0 then
+		return
 	end
 
 	if info then
@@ -389,7 +391,6 @@ function mcl_localplayer.item_globalstep (dtime)
 			end
 		end
 	end
-	mcl_localplayer.check_spyglass ()
 end
 
 function mcl_localplayer.do_ammoctrl (ammo, challenge)
@@ -480,7 +481,7 @@ function mcl_localplayer.check_spyglass ()
 		= current_wielditem.name == "mcl_spyglass:spyglass"
 	if spyglass_enabled then
 		local controls = core.localplayer:get_control ()
-		spyglass_enabled = controls.zoom or controls.use
+		spyglass_enabled = controls.zoom or controls.place
 	end
 	if spyglass_enabled then
 		if not spyglass_active then
