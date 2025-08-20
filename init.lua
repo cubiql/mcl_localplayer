@@ -160,12 +160,13 @@ dofile (minetest.get_modpath (modname) .. "/miniflowlib.lua")
 dofile (minetest.get_modpath (modname) .. "/player.lua")
 dofile (minetest.get_modpath (modname) .. "/items.lua")
 dofile (minetest.get_modpath (modname) .. "/mount.lua")
+dofile (minetest.get_modpath (modname) .. "/effects.lua")
 
 ------------------------------------------------------------------------
 -- Client-server communication.
 ------------------------------------------------------------------------
 
-local PROTO_VERSION = 1
+local PROTO_VERSION = 2
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'
@@ -204,6 +205,7 @@ local CLIENTBOUND_VEHICLE_CAPABILITIES = 'AO'
 local CLIENTBOUND_KNOCKBACK = 'AP'
 local CLIENTBOUND_OFFHAND_ITEM = 'AQ' -- Protocol version 1.
 local CLIENTBOUND_PLAYER_VITALS = 'AR'
+local CLIENTBOUND_EFFECT_CTRL = 'AS' -- Protocol version 2.
 
 -- Payload parameters.
 local MAX_PAYLOAD = 65533
@@ -302,7 +304,31 @@ end
 -- Connection initialization.
 ------------------------------------------------------------------------
 
+local mg_overworld_min = -128
+local mg_overworld_max = 32767
+local mg_nether_min = -29067
+local mg_nether_max = mg_nether_min + 128
+local mg_end_min = -27073
+local mg_end_max = mg_overworld_min - 2000
+
 mcl_localplayer.localplayer_initialized = false
+mcl_localplayer.map_configuration = {
+	{
+		min = mg_nether_min,
+		max = mg_nether_max + 128,
+		dim = "nether",
+	},
+	{
+		min = mg_overworld_min,
+		max = mg_overworld_max,
+		dim = "overworld",
+	},
+	{
+		min = mg_end_min,
+		max = mg_end_max,
+		dim = "end",
+	},
+}
 
 local handshake_payloads = {}
 
@@ -394,6 +420,21 @@ local function process_clientbound_hello (payload)
 						end
 					end
 					mcl_localplayer.item_defs = handshake.item_defs
+				end
+
+				if handshake.proto >= 2 then -- Map layout.
+					local cfg = handshake.map_configuration
+					if type (cfg) ~= "table" then
+						error ("Invalid handshake.map_configuration")
+					end
+					for _, cfg in ipairs (handshake.map_configuration) do
+						if type (cfg.min) ~= "number"
+							or type (cfg.max) ~= "number"
+							or type (cfg.dim) ~= "string" then
+							error ("Invalid item in handshake.map_configuration")
+						end
+					end
+					mcl_localplayer.map_configuration = cfg
 				end
 
 				-- Initialize the CSM.
@@ -540,6 +581,9 @@ local function receive_modchannel_message (channel_name, sender, message)
 			elseif msgtype == CLIENTBOUND_PLAYER_VITALS then
 				local payload = core.parse_json (payload)
 				mcl_localplayer.handle_player_vitals (payload)
+			elseif msgtype == CLIENTBOUND_EFFECT_CTRL then
+				local payload = core.parse_json (payload)
+				mcl_localplayer.handle_effect_ctrl (payload)
 			end
 		end
 	end

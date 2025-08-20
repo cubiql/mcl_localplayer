@@ -256,22 +256,18 @@ function mcl_localplayer.get_node_def (name)
 	return mcl_localplayer.node_defs[name]
 end
 
-local mg_overworld_min = -128
-local mg_nether_min = -29067
-local mg_nether_max = mg_nether_min + 128
-local mg_end_min = -27073
-local mg_end_max = mg_overworld_min - 2000
+local map_configuration = nil
 
 local function y_to_dimension (y)
-	if y >= mg_overworld_min then
-		return "overworld"
-	elseif y >= mg_nether_min and y <= mg_nether_max + 128 then
-		return "nether"
-	elseif y >= mg_end_min and y <= mg_end_max then
-		return "end"
-	else
-		return "void"
+	if not map_configuration then
+		map_configuration = mcl_localplayer.map_configuration
 	end
+	for _, dim in ipairs (map_configuration) do
+		if dim.min <= y and dim.max >= y then
+			return dim.dim
+		end
+	end
+	return "void"
 end
 
 mcl_localplayer.y_to_dimension = y_to_dimension
@@ -960,6 +956,7 @@ end)
 function localplayer:is_underwater ()
 	local depth = self.swimming and 0.5 or 1.75
 	return self._immersion_depth >= depth
+		and self.liquidtype == "water"
 end
 
 function localplayer:set_swimming (swimming)
