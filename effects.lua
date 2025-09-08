@@ -155,10 +155,17 @@ local base_skybox_void = {
 	},
 }
 
+local current_moon_texture
+
 local function apply_skybox_layer (layer)
 	core.camera:set_sky (layer.sky)
 	core.camera:set_sun (layer.sun)
-	core.camera:set_moon (layer.moon)
+	local moon = {
+		visible = layer.moon.visible,
+		texture = current_moon_texture,
+		scale = 3.75,
+	}
+	core.camera:set_moon (moon)
 	core.camera:set_stars (layer.stars)
 end
 
@@ -304,6 +311,12 @@ function mcl_localplayer.handle_effect_ctrl (cfg)
 
 	if cfg.weather_state then
 		weather_state = cfg.weather_state
+		update_skybox = true
+	end
+
+	if cfg.moon_texture and mcl_localplayer.proto >= 3 then
+		assert (type (cfg.moon_texture) == "string")
+		current_moon_texture = cfg.moon_texture
 		update_skybox = true
 	end
 
