@@ -1097,9 +1097,9 @@ function boat:drive (dtime, moveresult, params)
 	-- and adjusting the camera's orientation here would produce a
 	-- one frame delay.
 	self.object:set_yaw (yaw)
-	if ctrl.left then
+	if ctrl.movement_x < -0.5 then
 		self._yaw_acc = self._yaw_acc + (dtime * math.pi * 1.5)
-	elseif ctrl.right then
+	elseif ctrl.movement_x > 0.5 then
 		self._yaw_acc = self._yaw_acc - (dtime * math.pi * 1.5)
 	else
 		self._yaw_acc = self._yaw_acc
@@ -1135,9 +1135,11 @@ function boat:drive (dtime, moveresult, params)
 		acc = 0.4
 	end
 
-	if ctrl.up then
+  local abs_x = math.abs(ctrl.movement_x)
+  local abs_y = math.abs(ctrl.movement_y)
+	if abs_x < abs_y and ctrl.movement_y > 0.5 then
 		speed = speed + acc * dtime
-	elseif ctrl.down then
+	elseif abs_x < abs_y and ctrl.movement_y < -0.5 then
 		speed = speed - acc * dtime
 	else
 		speed = speed * math.pow (BOAT_DRAG, dtime)
