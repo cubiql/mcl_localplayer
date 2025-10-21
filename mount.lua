@@ -1135,8 +1135,8 @@ function boat:drive (dtime, moveresult, params)
 		acc = 0.4
 	end
 
-  local abs_x = math.abs(ctrl.movement_x)
-  local abs_y = math.abs(ctrl.movement_y)
+	local abs_x = math.abs (ctrl.movement_x)
+	local abs_y = math.abs (ctrl.movement_y)
 	if abs_x < abs_y and ctrl.movement_y > 0.5 then
 		speed = speed + acc * dtime
 	elseif abs_x < abs_y and ctrl.movement_y < -0.5 then
