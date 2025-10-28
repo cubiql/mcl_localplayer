@@ -166,7 +166,7 @@ dofile (minetest.get_modpath (modname) .. "/effects.lua")
 -- Client-server communication.
 ------------------------------------------------------------------------
 
-local PROTO_VERSION = 3
+local PROTO_VERSION = 4
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'
@@ -185,6 +185,7 @@ local SERVERBOUND_CONFIGURE_VEHICLE = 'am'
 local SERVERBOUND_TURN_VEHICLE = 'an'
 local SERVERBOUND_SHIELDCTRL = 'ao' -- Protocol version 1.
 local SERVERBOUND_EAT_ITEM = 'ap'
+local SERVERBOUND_RELEASE_TRIDENT_ITEM = 'aq' -- Protocol version 4.
 
 -- Clientbound messages.
 local CLIENTBOUND_HELLO = 'AA'
@@ -206,6 +207,7 @@ local CLIENTBOUND_KNOCKBACK = 'AP'
 local CLIENTBOUND_OFFHAND_ITEM = 'AQ' -- Protocol version 1.
 local CLIENTBOUND_PLAYER_VITALS = 'AR'
 local CLIENTBOUND_EFFECT_CTRL = 'AS' -- Protocol version 2.
+local CLIENTBOUND_TRIDENT_CTRL = 'AT' -- Protocol version 4.
 
 -- Payload parameters.
 local MAX_PAYLOAD = 65533
@@ -298,6 +300,10 @@ function mcl_localplayer.send_eat_item (stack, index)
 		return
 	end
 	mcl_localplayer.send (SERVERBOUND_EAT_ITEM .. payload)
+end
+
+function mcl_localplayer.send_release_trident_item ()
+	mcl_localplayer.send (SERVERBOUND_RELEASE_TRIDENT_ITEM)
 end
 
 ------------------------------------------------------------------------
@@ -435,6 +441,18 @@ local function process_clientbound_hello (payload)
 						end
 					end
 					mcl_localplayer.map_configuration = cfg
+				end
+
+				if handshake.proto >= 4 then -- Trident information.
+					if type (handshake.trident_info) ~= "table" then
+						error ("Malformed handshake.trident_info")
+					end
+					for k, v in pairs (handshake.trident_info) do
+						if type (k) ~= "string" or type (v) ~= "table" then
+							error ("Malformed handshake.trident_info")
+						end
+					end
+					mcl_localplayer.init_tridents (handshake.trident_info)
 				end
 
 				-- Initialize the CSM.
@@ -584,6 +602,9 @@ local function receive_modchannel_message (channel_name, sender, message)
 			elseif msgtype == CLIENTBOUND_EFFECT_CTRL then
 				local payload = core.parse_json (payload)
 				mcl_localplayer.handle_effect_ctrl (payload)
+			elseif msgtype == CLIENTBOUND_TRIDENT_CTRL then
+				local payload = core.parse_json (payload)
+				mcl_localplayer.do_trident_ctrl (payload)
 			end
 		end
 	end

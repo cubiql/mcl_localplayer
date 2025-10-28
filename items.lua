@@ -47,6 +47,7 @@ local item_being_placed = nil
 local offhand_placed = false
 local item_class = nil
 local item_use_time = 0.0
+local item_enchantments = nil
 
 function mcl_localplayer.handle_offhand_item (stack)
 	localplayer.offhand_item = stack
@@ -83,6 +84,12 @@ function mcl_localplayer.use_item_locally (itemstack, class, offhand)
 	elseif class == "bow"
 		or class == "food_edible_whilst_full" then
 		if offhand then
+			return false
+		end
+	elseif (class == "trident" and mcl_localplayer.proto >= 4) then
+		item_enchantments = mcl_localplayer.get_enchantments (itemstack)
+		if offhand or (item_enchantments["riptide"]
+			       and mcl_localplayer.is_riptide_unavailable ()) then
 			return false
 		end
 	end
@@ -180,6 +187,7 @@ local NORMAL_EAT_DELAY = 1.6
 local wieldmesh_overridden = false
 
 local function animate_wieldmesh (dtime)
+	local proto = mcl_localplayer.proto
 	item_use_time = item_use_time + dtime
 
 	if item_class == "food" or item_class == "food_edible_whilst_full" then
@@ -208,9 +216,14 @@ local function animate_wieldmesh (dtime)
 			core.camera:reset_wieldmesh_override (0.0)
 			mcl_localplayer.send_eat_item (item_being_placed, index)
 		end
-	elseif wieldmesh_overridden then
-		wieldmesh_overridden = false
-		core.camera:reset_wieldmesh_override (0.0)
+	elseif proto >= 4 and item_class == "trident" then
+		mcl_localplayer.animate_trident_wieldmesh (item_use_time)
+	elseif proto < 4
+		or not mcl_localplayer.animate_trident_wieldmesh (0.0) then
+		if wieldmesh_overridden then
+			wieldmesh_overridden = false
+			core.camera:reset_wieldmesh_override (0.0)
+		end
 	end
 end
 
@@ -219,8 +232,27 @@ function mcl_localplayer.is_using_food ()
 		or item_class == "food_edible_whilst_full"
 end
 
+function mcl_localplayer.is_using_trident ()
+	return item_class == "trident"
+		and mcl_localplayer.proto >= 4
+end
+
+function mcl_localplayer.get_item_use_time ()
+	return item_use_time
+end
+
 ------------------------------------------------------------------------
--- Usable wielditems, in particular, bows.
+-- Enchantment parser.
+------------------------------------------------------------------------
+
+function mcl_localplayer.get_enchantments (stack)
+	local key = "mcl_enchanting:enchantments"
+	local tbl = core.deserialize (stack:get_meta ():get_string (key))
+	return tbl or {}
+end
+
+------------------------------------------------------------------------
+-- Usable wielditems, in particular, bows and tridents.
 ------------------------------------------------------------------------
 
 local current_wielditem = {
@@ -230,6 +262,7 @@ local current_wielditem = {
 
 local is_bow = {}
 local is_crossbow = {}
+local is_trident = {}
 local bow_capabilities = {
 	infinity = false,
 	charge_time = 1.0,
@@ -246,6 +279,10 @@ function mcl_localplayer.init_bows (bows)
 	is_bow = bows
 	is_crossbow = bows.is_crossbow
 	bows.is_crossbow = nil
+end
+
+function mcl_localplayer.init_tridents (tridents)
+	is_trident = tridents
 end
 
 local function do_release (usetime)
@@ -283,9 +320,15 @@ function mcl_localplayer.item_globalstep (dtime)
 
 	if item_being_placed then
 		allow_bows = not offhand_placed and item_class == "bow"
+		local stack_unchanged_p = stack:equals (item_being_placed)
 
-		if (not offhand_placed
-			and not stack:equals (item_being_placed))
+		if item_class == "trident" and mcl_localplayer.proto >= 4
+			and stack_unchanged_p and not controls.place then
+			if item_use_time > 0.50 then
+				mcl_localplayer.send_release_trident_item ()
+			end
+			mcl_localplayer.unuse_item ()
+		elseif (not offhand_placed and not stack_unchanged_p)
 			or not controls.place then
 			-- Allow uninterrupted eating of a single
 			-- stack of food.
@@ -425,6 +468,61 @@ end
 
 function mcl_localplayer.is_using_bow_visually ()
 	return use_time > 0 or using_bow_visually
+end
+
+-- Trident mechanics.
+
+function mcl_localplayer.is_riptide_unavailable ()
+	return not localplayer:is_underwater ()
+		and not localplayer.riptide_eligible
+end
+
+-- Trident animations.
+
+local TRIDENT_POSITION = vector.new (0, -35, -40)
+local TRIDENT_ROTATION = vector.new (0, 0, 0)
+local TRIDENT_POSITION_INITIAL = vector.new (65, 35, 35)
+local TRIDENT_ROTATION_INITIAL = vector.new (75, 0, 90)
+local TRIDENT_POSITION_FINAL = vector.new (65, 55, 15)
+local v = vector.zero ()
+local trident_phase = 0
+
+function mcl_localplayer.animate_trident_wieldmesh (dtime)
+	if dtime == 0.0 and is_trident[current_wielditem.name] then
+		core.camera:override_wieldmesh (TRIDENT_POSITION, TRIDENT_ROTATION, 0.0, true)
+		trident_phase = 0
+		wieldmesh_overridden = true
+		return true
+	elseif dtime > 0.0 and dtime <= 0.10 then
+		if trident_phase == 0 then
+			core.camera:override_wieldmesh (TRIDENT_POSITION_INITIAL,
+							TRIDENT_ROTATION_INITIAL,
+							0.10 - dtime, false)
+			wieldmesh_overridden = true
+			trident_phase = 1
+		end
+		return true
+	elseif dtime > 0.10 and dtime <= 0.50 then
+		if trident_phase == 1 then
+			core.camera:override_wieldmesh (TRIDENT_POSITION_FINAL,
+							TRIDENT_ROTATION_INITIAL,
+							0.50 - dtime, false)
+			wieldmesh_overridden = true
+			trident_phase = 2
+		end
+		return true
+	elseif dtime > 0.50 then
+		v.x = TRIDENT_POSITION_FINAL.x
+		v.y = TRIDENT_POSITION_FINAL.y
+		v.z = TRIDENT_POSITION_FINAL.z
+			+ math.sin ((dtime - 0.50) * math.pi * 8) * 1.0
+		core.camera:override_wieldmesh (v, TRIDENT_ROTATION_INITIAL,
+						0.0, false)
+		wieldmesh_overridden = true
+		trident_phase = 3
+		return true
+	end
+	return false
 end
 
 ------------------------------------------------------------------------

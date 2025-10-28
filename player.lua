@@ -10,6 +10,7 @@ local POSE_SWIMMING = 5
 local POSE_SIT_MOUNTED = 6
 local POSE_MOUNTED = 7
 local POSE_DEATH = 8
+local POSE_SPIN_ATTACK = 9
 
 mcl_localplayer.POSE_STANDING = POSE_STANDING
 mcl_localplayer.POSE_CROUCHING = POSE_CROUCHING
@@ -18,6 +19,7 @@ mcl_localplayer.POSE_SWIMMING = POSE_SWIMMING
 mcl_localplayer.POSE_SIT_MOUNTED = POSE_SIT_MOUNTED
 mcl_localplayer.POSE_MOUNTED = POSE_MOUNTED
 mcl_localplayer.POSE_DEATH = POSE_DEATH
+mcl_localplayer.POSE_SPIN_ATTACK = POSE_SPIN_ATTACK
 
 local STANDARD_FOV_FACTOR = 1.0
 
@@ -86,6 +88,8 @@ local localplayer = {
 	health = 20,
 	hunger = 20,
 	saturation = 20,
+	in_auto_spin_attack = false,
+	riptide_eligible = false,
 }
 mcl_localplayer.localplayer = localplayer
 
@@ -1079,7 +1083,9 @@ function localplayer.on_step (dtime, moveresult, params)
 		self:send_movement_state ()
 
 		-- Configure a suitable pose.
-		local pose = self.mount_pose
+		local pose = self.in_auto_spin_attack
+			and POSE_SPIN_ATTACK
+			or self.mount_pose
 		if pose ~= self.pose then
 			self:apply_pose (pose)
 		end
@@ -1175,6 +1181,7 @@ function localplayer.on_step (dtime, moveresult, params)
 		    and self._immersion_depth <= 0)
 		or mcl_localplayer.is_using_bow ()
 		or mcl_localplayer.is_using_food ()
+		or mcl_localplayer.is_using_trident ()
 
 	if moving_slowly then
 		local factor = math.min (PLAYER_CROUCH_FACTOR + self.sneak_speed_bonus, 1.0)
@@ -1410,6 +1417,11 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 		if not data.pose_defs[POSE_SIT_MOUNTED] then
 			error ("Server did not define POSE_SIT_MOUNTED")
 		end
+		if mcl_localplayer.proto >= 4 then
+			if not data.pose_defs[POSE_SPIN_ATTACK] then
+				error ("Server did not define POSE_SPIN_ATTACK")
+			end
+		end
 		mcl_localplayer.pose_defs = data.pose_defs
 		localplayer:apply_pose (localplayer.pose)
 	end
@@ -1473,6 +1485,8 @@ function localplayer:desired_pose (self_pos, controls, params)
 		pose = POSE_FALL_FLYING
 	elseif self.swimming then
 		pose = POSE_SWIMMING
+	elseif self.in_auto_spin_attack then
+		pose = POSE_SPIN_ATTACK
 	elseif controls.sneak and not params.flying then
 		pose = POSE_CROUCHING
 	else
@@ -1665,6 +1679,11 @@ function localplayer:tick_animation (controls, dtime)
 		profile_done ("LocalPlayer animate POSE_SWIMMING")
 		profile_done ("LocalPlayer tick_animation")
 		return
+	elseif self.pose == POSE_SPIN_ATTACK then
+		self:unrotate ("Head_Control")
+		self:unrotate ("Body_Control")
+		-- TODO: spin.
+		return
 	elseif self.pose == POSE_FALL_FLYING then
 		profile ("LocalPlayer animate POSE_FALL_FLYING")
 		local move_pitch = dir_to_pitch (v)
@@ -1758,6 +1777,12 @@ function localplayer:tick_animation (controls, dtime)
 		self:rotate_non_redundantly ("Arm_Left_Pitch_Control", left_arm_rot.x,
 					left_arm_rot.y,
 					left_arm_rot.z)
+	elseif mcl_localplayer.is_using_trident () then
+		local use_time = mcl_localplayer.get_item_use_time ()
+		self:rotate_non_redundantly ("Arm_Right", 0, 0, 0)
+		self:rotate_non_redundantly ("Arm_Left", 0, 0, 0)
+		self:unrotate ("Arm_Left_Pitch_Control")
+		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", 0, math.pi, 0)
 	else
 		self:unrotate ("Arm_Right")
 		self:unrotate ("Arm_Left")
@@ -1769,8 +1794,13 @@ function localplayer:tick_animation (controls, dtime)
 end
 
 function mcl_localplayer.do_posectrl (ctrlword)
-	assert (not ctrlword or (ctrlword >= POSE_STANDING
-					and ctrlword <= POSE_DEATH))
+	if mcl_localplayer.proto < 4 then
+		assert (not ctrlword or (ctrlword >= POSE_STANDING
+					 and ctrlword <= POSE_DEATH))
+	else
+		assert (not ctrlword or (ctrlword >= POSE_STANDING
+					 and ctrlword <= POSE_SPIN_ATTACK))
+	end
 	localplayer.overriding_pose = ctrlword
 end
 
@@ -1783,6 +1813,20 @@ end
 
 function mcl_localplayer.set_mount_pose (poseid)
 	localplayer.mount_pose = poseid
+end
+
+function mcl_localplayer.do_trident_ctrl (payload)
+	if mcl_localplayer.proto < 4 then
+		error ("Did not expect server to dictate trident activation state")
+	end
+	if payload.riptide_active ~= nil then
+		assert (type (payload.riptide_active) == "boolean")
+		localplayer.in_auto_spin_attack = payload.riptide_active
+	end
+	if payload.riptide_eligible ~= nil then
+		assert (type (payload.riptide_eligible) == "boolean")
+		localplayer.riptide_eligible = payload.riptide_eligible
+	end
 end
 
 ------------------------------------------------------------------------
