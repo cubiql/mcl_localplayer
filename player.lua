@@ -54,6 +54,7 @@ local localplayer = {
 	current_eye_height = -1,
 	target_eye_height = 1.6,
 	_last_move_yaw = 0,
+	_last_move_yaw_interp = 0,
 	sneak_speed_bonus = 0.0,
 	can_sprint = false,
 	movement_arresting_nodes = {},
@@ -1322,6 +1323,12 @@ end
 -- Poses.
 ------------------------------------------------------------------------
 
+local mathcos = math.cos
+local mathsin = math.sin
+local mathasin = math.asin
+local mathatan2 = math.atan2
+
+local mathmin = math.min
 
 -- Pose definition format.
 -- {
@@ -1555,7 +1562,7 @@ local FOURTY_DEG = math.rad (40)
 local TWENTY_DEG = math.rad (20)
 local SEVENTY_FIVE_DEG = math.rad (75)
 local FIFTY_DEG = math.rad (50)
-local ONE_HUNDRED_AND_TEN_DEG = math.rad (110)
+local NINETY_DEG = math.pi / 2
 
 local function dir_to_pitch (dir)
 	local xz = math.abs (dir.x) + math.abs (dir.z)
@@ -1573,6 +1580,38 @@ local OVERRIDE_TEMPLATE = {
 }
 
 local DEFAULT_FOV = 86.1
+
+local function rotation_to_irrlicht (x, y, z)
+	-- https://www.geometrictools.com/Documentation/EulerAngles.pdf
+	local cx, sx = mathcos (x), mathsin (x)
+	local cy, sy = mathcos (y), mathsin (y)
+	local cz, sz = mathcos (z), mathsin (z)
+
+	-- ZXY intrinsic to ZYX extrinsic.
+	-- luacheck: push ignore 211
+	local m00, m01, m02 = cy*cz - sx*sy*sz, -cx*sz, cz*sy + cy*sx*sz
+	local m10, m11, m12 = cz*sx*sy + cy*sz, cx*cz, -cy*cz*sx + sx*sz
+	local m20, m21, m22 = -cx*sy, sx, cx*cy
+	-- luacheck: pop
+	local tx, ty, tz
+
+	if m20 < 1 then
+		if m20 > -1 then
+			ty = mathasin (m20)
+			tz = mathatan2 (m10, m00)
+			tx = mathatan2 (m21, m22)
+		else
+			ty = -NINETY_DEG
+			tz = -mathatan2 (-m12, m11)
+			tx = 0
+		end
+	else
+		ty = NINETY_DEG
+		tz = mathatan2 (-m12, m11)
+		tx = 0
+	end
+	return tx, ty, tz
+end
 
 function localplayer:rotate_non_redundantly (bone, rot_x, rot_y, rot_z)
 	local existing = self._bone_overrides[bone]
@@ -1599,6 +1638,11 @@ function localplayer:rotate_non_redundantly (bone, rot_x, rot_y, rot_z)
 	profile_done ("LocalPlayer set_bone_override")
 end
 
+function localplayer:rotate_non_redundantly_obj (bone, rot_x, rot_y, rot_z)
+	local x, y, z = rotation_to_irrlicht (rot_x, rot_y, rot_z)
+	self:rotate_non_redundantly (bone, x, y, z)
+end
+
 local NOTHING = {}
 
 function localplayer:unrotate (bone)
@@ -1609,6 +1653,11 @@ function localplayer:unrotate (bone)
 		self._bone_overrides[bone] = nil
 		profile_done ("LocalPlayer set_bone_override")
 	end
+end
+
+local function lerp_angle (u, s1, s2)
+	local diff = norm_radians (s2 - s1)
+	return norm_radians (s1 + diff * u)
 end
 
 function localplayer:tick_animation (controls, dtime)
@@ -1659,8 +1708,11 @@ function localplayer:tick_animation (controls, dtime)
 	profile ("LocalPlayer animate prologue")
 	local look_dir = self.last_yaw
 	local v = vector.normalize (v)
-	local move_yaw = (math.abs (v.z) < 0.35 and math.abs (v.x) < 0.35)
+	local move_yaw_unlerped = (math.abs (v.z) < 0.35 and math.abs (v.x) < 0.35)
 		and self._last_move_yaw or math.atan2 (v.z, v.x) - math.pi / 2
+	local d = mathmin (1.0, dtime / ONE_TICK)
+	local move_yaw = lerp_angle (d * 0.333, self._last_move_yaw_interp, move_yaw_unlerped)
+	self._last_move_yaw_interp = move_yaw
 	profile_done ("LocalPlayer animate prologue")
 
 	if self.pose == POSE_SWIMMING then
@@ -1690,10 +1742,11 @@ function localplayer:tick_animation (controls, dtime)
 		local xrot = move_pitch + FIFTY_DEG
 		local yrot = move_yaw - look_dir
 		self:rotate_non_redundantly ("Head_Control", xrot, yrot, 0)
-		local xrot = move_pitch + ONE_HUNDRED_AND_TEN_DEG
-		local yrot = -move_yaw + norm_radians (look_dir)
-		self:rotate_non_redundantly ("Body_Control", xrot, yrot, math.pi)
-		self._last_move_yaw = move_yaw
+
+		local xrot = -move_pitch + math.pi / 2
+		self:rotate_non_redundantly_obj ("Body_Control", xrot,
+						 math.pi + yrot, 0)
+
 		profile_done ("LocalPlayer animate POSE_FALL_FLYING")
 		profile_done ("LocalPlayer tick_animation")
 		return
@@ -1778,7 +1831,6 @@ function localplayer:tick_animation (controls, dtime)
 					left_arm_rot.y,
 					left_arm_rot.z)
 	elseif mcl_localplayer.is_using_trident () then
-		local use_time = mcl_localplayer.get_item_use_time ()
 		self:rotate_non_redundantly ("Arm_Right", 0, 0, 0)
 		self:rotate_non_redundantly ("Arm_Left", 0, 0, 0)
 		self:unrotate ("Arm_Left_Pitch_Control")
@@ -1786,8 +1838,8 @@ function localplayer:tick_animation (controls, dtime)
 	else
 		self:unrotate ("Arm_Right")
 		self:unrotate ("Arm_Left")
-		self:rotate_non_redundantly ("Arm_Right_Pitch_Control", math.pi, 0, 0)
-		self:rotate_non_redundantly ("Arm_Left_Pitch_Control", math.pi, 0, 0)
+		self:unrotate ("Arm_Right_Pitch_Control")
+		self:unrotate ("Arm_Left_Pitch_Control")
 	end
 	profile_done ("LocalPlayer animate arm rotation")
 	profile_done ("LocalPlayer tick_animation")
