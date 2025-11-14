@@ -253,6 +253,7 @@ function mcl_localplayer.tick_effects (self_pos, dtime)
 	if lighting ~= previous_lighting_cfg then
 		core.camera:set_ambient_lighting (lighting.ambient_level,
 						  lighting.range_squeeze)
+		previous_lighting_cfg = lighting
 	end
 
 	local skybox_layer
