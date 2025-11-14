@@ -55,6 +55,7 @@ local localplayer = {
 	target_eye_height = 1.6,
 	_last_move_yaw = 0,
 	_last_move_yaw_interp = 0,
+	_last_move_pitch_interp = 0,
 	sneak_speed_bonus = 0.0,
 	can_sprint = false,
 	movement_arresting_nodes = {},
@@ -1708,17 +1709,23 @@ function localplayer:tick_animation (controls, dtime)
 	profile ("LocalPlayer animate prologue")
 	local look_dir = self.last_yaw
 	local v = vector.normalize (v)
-	local move_yaw_unlerped = (math.abs (v.z) < 0.35 and math.abs (v.x) < 0.35)
+	local move_yaw_immediate = (math.abs (v.z) < 0.35 and math.abs (v.x) < 0.35)
 		and self._last_move_yaw or math.atan2 (v.z, v.x) - math.pi / 2
-	local d = mathmin (1.0, dtime / ONE_TICK)
-	local move_yaw = lerp_angle (d * 0.333, self._last_move_yaw_interp, move_yaw_unlerped)
+	local d = dtime / ONE_TICK
+	local move_yaw = lerp_angle (mathmin (1.0, d * 0.333),
+				     self._last_move_yaw_interp,
+				     move_yaw_immediate)
 	self._last_move_yaw_interp = move_yaw
+
+	local move_pitch_immediate = dir_to_pitch (v)
+	local move_pitch = lerp_angle (mathmin (1.0, d), self._last_move_pitch_interp,
+				       move_pitch_immediate)
+	self._last_move_pitch_interp = move_pitch
 	profile_done ("LocalPlayer animate prologue")
 
 	if self.pose == POSE_SWIMMING then
 		profile ("LocalPlayer animate POSE_SWIMMING")
 		local pitch = core.camera:get_look_vertical ()
-		local move_pitch = dir_to_pitch (v)
 		local norm_look_dir = norm_radians (look_dir)
 		self:rotate_non_redundantly ("Head_Control",
 			(pitch - move_pitch) + TWENTY_DEG,
@@ -1738,7 +1745,6 @@ function localplayer:tick_animation (controls, dtime)
 		return
 	elseif self.pose == POSE_FALL_FLYING then
 		profile ("LocalPlayer animate POSE_FALL_FLYING")
-		local move_pitch = dir_to_pitch (v)
 		local xrot = move_pitch + FIFTY_DEG
 		local yrot = move_yaw - look_dir
 		self:rotate_non_redundantly ("Head_Control", xrot, yrot, 0)
