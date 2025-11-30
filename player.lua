@@ -1746,7 +1746,7 @@ function localplayer:tick_animation (controls, dtime)
 	elseif self.pose == POSE_FALL_FLYING then
 		profile ("LocalPlayer animate POSE_FALL_FLYING")
 		local xrot = move_pitch + FIFTY_DEG
-		local yrot = move_yaw - look_dir
+		local yrot = look_dir - move_yaw
 		self:rotate_non_redundantly ("Head_Control", xrot, yrot, 0)
 
 		local xrot = -move_pitch + math.pi / 2

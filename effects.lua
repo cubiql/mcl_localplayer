@@ -4,12 +4,12 @@
 -- - [X] Ambient lighting in different dimensions.
 -- - [X] Night vision.
 -- - [X] Skyboxes (and biome skyboxes)
--- TODO: Protocol version 3:
--- - [ ]   + Viewing range reductions in fluids and in the End.
--- - [ ] Client-side weather & lightning.
+-- - [X] Client-side weather & lightning.
+-- - [ ] Viewing range reductions in fluids and in the End.
 ------------------------------------------------------------------------
 
 local floor = math.floor
+local mathabs = math.abs
 
 ------------------------------------------------------------------------
 -- Skybox & ambient lighting.
@@ -239,6 +239,29 @@ local function apply_skybox_biome_colors ()
 	base_skybox_end.sky.base_color = end_fog_color (biome_fog_color)
 end
 
+local current_climate = nil
+local applied_climate = nil
+local climate_spawner_id = nil
+local sound_handle = nil
+
+local climate_particle_spawners = {}
+
+local function get_sound_gain (self_pos)
+	if current_climate == "default" then
+		local x = floor (self_pos.x + 0.5)
+		local y = floor (self_pos.y + 0.5)
+		local z = floor (self_pos.z + 0.5)
+		local nearest = core.scan_position_height (x, y, z, 7)
+		if nearest and mathabs (nearest.y - floor (self_pos.y)) <= 7 then
+			return 1.0
+		else
+			return 0.0
+		end
+	else
+		return 0.0
+	end
+end
+
 function mcl_localplayer.tick_effects (self_pos, dtime)
 	local ylevel = floor (self_pos.y + 0.5)
 	local dim = y_to_dimension (ylevel)
@@ -273,6 +296,39 @@ function mcl_localplayer.tick_effects (self_pos, dtime)
 	if skybox_layer ~= current_skybox_layer then
 		apply_skybox_layer (skybox_layer)
 		current_skybox_layer = skybox_layer
+	end
+	if weather_state == "rain" or weather_state == "thunder" then
+		if current_climate ~= applied_climate then
+			if climate_spawner_id then
+				core.delete_volume_particle_spawner (climate_spawner_id)
+				climate_spawner_id = nil
+			end
+			local def = climate_particle_spawners[current_climate]
+			if def then
+				climate_spawner_id = core.add_volume_particle_spawner (def)
+			end
+			applied_climate = current_climate
+		end
+
+		local gain = get_sound_gain (self_pos)
+		if gain > 0.0 and not sound_handle then
+			sound_handle = core.sound_play ({
+				name = "weather_rain",
+				gain = 1.0,
+			}, { loop = true, })
+		end
+		if sound_handle then
+			core.sound_fade (sound_handle, -0.5, gain)
+		end
+		if gain <= 0.0 then
+			sound_handle = nil
+		end
+	else
+		if climate_spawner_id then
+			core.delete_volume_particle_spawner (climate_spawner_id)
+		end
+		climate_spawner_id = nil
+		applied_climate = nil
 	end
 end
 
@@ -319,6 +375,38 @@ function mcl_localplayer.handle_effect_ctrl (cfg)
 		assert (type (cfg.moon_texture) == "string")
 		current_moon_texture = cfg.moon_texture
 		update_skybox = true
+	end
+
+	if cfg.climate and mcl_localplayer.proto >= 5 then
+		assert (cfg.climate == "none"
+			or cfg.climate == "cold"
+			or cfg.climate == "arid"
+			or cfg.climate == "default")
+		current_climate = cfg.climate
+	end
+
+	if cfg.preciptation_spawners and mcl_localplayer.proto >= 5 then
+		assert (type (cfg.preciptation_spawners) == "table")
+		for _, spawner in pairs (cfg.preciptation_spawners) do
+			assert (type (spawner.textures) == "table")
+			for _, texture in ipairs (spawner.textures) do
+				assert (type (texture) == "string")
+			end
+			assert (type (spawner.velocity_min) == "table"
+				and type (spawner.velocity_min.x) == "number"
+				and type (spawner.velocity_min.y) == "number"
+				and type (spawner.velocity_min.z) == "number")
+			assert (type (spawner.particles_per_column) == "number"
+				and spawner.particles_per_column > 0)
+			assert (type (spawner.size) == "number" and spawner.size > 0)
+			assert (type (spawner.range_vertical) == "number"
+				and spawner.range_vertical > 0)
+			assert (type (spawner.range_horizontal) == "number"
+				and spawner.range_horizontal > 0)
+			assert (type (spawner.period) == "number" and spawner.period > 0)
+			assert (type (spawner.above_heightmap) == "boolean")
+		end
+		climate_particle_spawners = cfg.preciptation_spawners
 	end
 
 	if update_skybox then

@@ -166,7 +166,7 @@ dofile (minetest.get_modpath (modname) .. "/effects.lua")
 -- Client-server communication.
 ------------------------------------------------------------------------
 
-local PROTO_VERSION = 4
+local PROTO_VERSION = 5
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'
