@@ -329,6 +329,10 @@ function mcl_localplayer.tick_effects (self_pos, dtime)
 		end
 		climate_spawner_id = nil
 		applied_climate = nil
+		if sound_handle then
+			core.sound_fade (sound_handle, -0.5, 0.0)
+			sound_handle = nil
+		end
 	end
 end
 
