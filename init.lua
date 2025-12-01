@@ -155,18 +155,23 @@ end
 -- Files.
 ------------------------------------------------------------------------
 
-dofile (minetest.get_modpath (modname) .. "/util.lua")
-dofile (minetest.get_modpath (modname) .. "/miniflowlib.lua")
-dofile (minetest.get_modpath (modname) .. "/player.lua")
-dofile (minetest.get_modpath (modname) .. "/items.lua")
-dofile (minetest.get_modpath (modname) .. "/mount.lua")
-dofile (minetest.get_modpath (modname) .. "/effects.lua")
+mcl_levelgen = {}
+
+dofile (core.get_modpath (modname) .. "/util.lua")
+dofile (core.get_modpath (modname) .. "/miniflowlib.lua")
+dofile (core.get_modpath (modname) .. "/player.lua")
+dofile (core.get_modpath (modname) .. "/items.lua")
+dofile (core.get_modpath (modname) .. "/mount.lua")
+dofile (core.get_modpath (modname) .. "/random.lua")
+dofile (core.get_modpath (modname) .. "/noise.lua")
+dofile (core.get_modpath (modname) .. "/level.lua")
+dofile (core.get_modpath (modname) .. "/effects.lua")
 
 ------------------------------------------------------------------------
 -- Client-server communication.
 ------------------------------------------------------------------------
 
-local PROTO_VERSION = 5
+local PROTO_VERSION = 6
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'
@@ -186,6 +191,7 @@ local SERVERBOUND_TURN_VEHICLE = 'an'
 local SERVERBOUND_SHIELDCTRL = 'ao' -- Protocol version 1.
 local SERVERBOUND_EAT_ITEM = 'ap'
 local SERVERBOUND_RELEASE_TRIDENT_ITEM = 'aq' -- Protocol version 4.
+local SERVERBOUND_DISCARD_BIOME_DATA = 'ar' -- Protocol version 6.
 
 -- Clientbound messages.
 local CLIENTBOUND_HELLO = 'AA'
@@ -208,6 +214,7 @@ local CLIENTBOUND_OFFHAND_ITEM = 'AQ' -- Protocol version 1.
 local CLIENTBOUND_PLAYER_VITALS = 'AR'
 local CLIENTBOUND_EFFECT_CTRL = 'AS' -- Protocol version 2.
 local CLIENTBOUND_TRIDENT_CTRL = 'AT' -- Protocol version 4.
+local CLIENTBOUND_BIOME_DATA = 'AU' -- Protocol version 6.
 
 -- Payload parameters.
 local MAX_PAYLOAD = 65533
@@ -304,6 +311,11 @@ end
 
 function mcl_localplayer.send_release_trident_item ()
 	mcl_localplayer.send (SERVERBOUND_RELEASE_TRIDENT_ITEM)
+end
+
+function mcl_localplayer.send_discard_biome_data (blocks)
+	mcl_localplayer.send (SERVERBOUND_DISCARD_BIOME_DATA
+			      .. table.concat (blocks, ","))
 end
 
 ------------------------------------------------------------------------
@@ -453,6 +465,20 @@ local function process_clientbound_hello (payload)
 						end
 					end
 					mcl_localplayer.init_tridents (handshake.trident_info)
+				end
+
+				if handshake.proto >= 6 then -- Biome information.
+					if type (handshake.biome_data_available) ~= "boolean" then
+						error ("Malformed handshake.biome_data_available")
+					end
+					if handshake.biome_data_available then
+						local id_to_name_map
+							= handshake.biome_id_to_name_map
+						local biome_definitions
+							= handshake.biome_definitions
+						mcl_localplayer.enable_biome_cache (id_to_name_map,
+										    biome_definitions)
+					end
 				end
 
 				-- Initialize the CSM.
@@ -605,6 +631,13 @@ local function receive_modchannel_message (channel_name, sender, message)
 			elseif msgtype == CLIENTBOUND_TRIDENT_CTRL then
 				local payload = core.parse_json (payload)
 				mcl_localplayer.do_trident_ctrl (payload)
+			elseif msgtype == CLIENTBOUND_BIOME_DATA then
+				local split = payload:split (',', false, 1)
+				local index_len = tonumber (split[1])
+				assert (index_len, "No index length provided in ClientboundBiomeData message")
+				local index = split[2]:sub (1, index_len)
+				assert (#index == index_len, "Provided index length is incorrect")
+				mcl_localplayer.import_biome_data (index_len, index, split[2])
 			end
 		end
 	end

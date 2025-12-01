@@ -1,4 +1,4 @@
-Protocol version: 5
+Protocol version: 6
 
 `mcl_localplayer' is an optional client-side mod for the Luanti
 (formerly Minetest) game Mineclonia, which implements client-side

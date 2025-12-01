@@ -240,11 +240,49 @@ local function apply_skybox_biome_colors ()
 end
 
 local current_climate = nil
-local applied_climate = nil
-local climate_spawner_id = nil
 local sound_handle = nil
 
 local climate_particle_spawners = {}
+local climate_particle_spawner_ids = {}
+local effect_visibility_map = {}
+local have_dynamic_climate_effects
+	= mcl_localplayer.have_dynamic_climate_effects
+local build_column_visibility_map
+	= mcl_localplayer.build_column_visibility_map
+local COLUMN_RAIN = mcl_localplayer.COLUMN_RAIN
+local COLUMN_SNOW = mcl_localplayer.COLUMN_SNOW
+local EFFECT_VISIBILITY_MAP_RANGE = 10
+
+local function enable_climate_effects (effects, map, x, z)
+	for existing, id in pairs (climate_particle_spawner_ids) do
+		for _, effect in ipairs (effects) do
+			if effect == existing then
+				id = nil
+				break
+			end
+		end
+		if id then
+			core.delete_volume_particle_spawner (id)
+			climate_particle_spawner_ids[existing] = nil
+		end
+	end
+
+	for _, effect in ipairs (effects) do
+		local id = climate_particle_spawner_ids[effect]
+		if not id then
+			local def = climate_particle_spawners[effect]
+			id = core.add_volume_particle_spawner (def)
+			climate_particle_spawner_ids[effect] = id
+		end
+		if map and effect == "cold" then
+			core.set_volume_particle_spawner_visibility_map (id, EFFECT_VISIBILITY_MAP_RANGE,
+									 x, z, map, COLUMN_SNOW)
+		elseif map and effect == "default" then
+			core.set_volume_particle_spawner_visibility_map (id, EFFECT_VISIBILITY_MAP_RANGE,
+									 x, z, map, COLUMN_RAIN)
+		end
+	end
+end
 
 local function get_sound_gain (self_pos)
 	if current_climate == "default" then
@@ -298,17 +336,18 @@ function mcl_localplayer.tick_effects (self_pos, dtime)
 		current_skybox_layer = skybox_layer
 	end
 	if weather_state == "rain" or weather_state == "thunder" then
-		if current_climate ~= applied_climate then
-			if climate_spawner_id then
-				core.delete_volume_particle_spawner (climate_spawner_id)
-				climate_spawner_id = nil
-			end
-			local def = climate_particle_spawners[current_climate]
-			if def then
-				climate_spawner_id = core.add_volume_particle_spawner (def)
-			end
-			applied_climate = current_climate
+		local effects, map
+		local x, z = floor (self_pos.x + 0.5),
+			floor (self_pos.z + 0.5)
+		if have_dynamic_climate_effects () then
+			map = effect_visibility_map
+			effects = build_column_visibility_map (x, ylevel, z, map,
+							       EFFECT_VISIBILITY_MAP_RANGE)
+		else
+			map = nil
+			effects = { current_climate, }
 		end
+		enable_climate_effects (effects, map, x, z)
 
 		local gain = get_sound_gain (self_pos)
 		if gain > 0.0 and not sound_handle then
@@ -324,11 +363,10 @@ function mcl_localplayer.tick_effects (self_pos, dtime)
 			sound_handle = nil
 		end
 	else
-		if climate_spawner_id then
-			core.delete_volume_particle_spawner (climate_spawner_id)
+		for existing, id in pairs (climate_particle_spawner_ids) do
+			core.delete_volume_particle_spawner (id)
+			climate_particle_spawner_ids[existing] = nil
 		end
-		climate_spawner_id = nil
-		applied_climate = nil
 		if sound_handle then
 			core.sound_fade (sound_handle, -0.5, 0.0)
 			sound_handle = nil
