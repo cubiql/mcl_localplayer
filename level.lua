@@ -174,7 +174,7 @@ local byte = string.byte
 local N = 4
 
 local function index_biome_list (offset, list, qx, qy, qz)
-	local i, idx = offset, qx * N * N + qy * N + qz
+	local i, idx = offset, qx * N * N + qy * N + qz + 1
 	local biome
 	repeat
 		idx = idx - byte (list, i)
