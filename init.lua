@@ -171,7 +171,7 @@ dofile (core.get_modpath (modname) .. "/effects.lua")
 -- Client-server communication.
 ------------------------------------------------------------------------
 
-local PROTO_VERSION = 6
+local PROTO_VERSION = 7
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'
@@ -476,8 +476,14 @@ local function process_clientbound_hello (payload)
 							= handshake.biome_id_to_name_map
 						local biome_definitions
 							= handshake.biome_definitions
+						local biome_data_type
+							= handshake.biome_data_type
+						if handshake.proto == 6 then
+							biome_data_type = "engine_data"
+						end
 						mcl_localplayer.enable_biome_cache (id_to_name_map,
-										    biome_definitions)
+										    biome_definitions,
+										    biome_data_type)
 					end
 				end
 

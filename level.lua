@@ -11,6 +11,7 @@ local floor = math.floor
 local mathabs = math.abs
 
 local biome_data_initialized = false
+local server_biome_system
 
 local BIOME_CACHE_RANGE = 4
 local BIOME_CACHE_DIAMETER = BIOME_CACHE_RANGE * 2 + 1
@@ -33,8 +34,14 @@ local id_to_name_map = {}
 local registered_biomes = {}
 
 function mcl_localplayer.enable_biome_cache (biome_id_to_name_map,
-					     biome_definitions)
+					     biome_definitions,
+					     biome_data_type)
 	biome_data_initialized = true
+	if biome_data_type ~= "levelgen_data"
+		and biome_data_type ~= "engine_data" then
+		error ("Unsupported biome data format: " .. biome_data_type)
+	end
+	server_biome_system = biome_data_type
 	assert (type (biome_definitions) == "table")
 	for id, name in pairs (biome_id_to_name_map) do
 		local id = tonumber (id)
@@ -46,11 +53,16 @@ function mcl_localplayer.enable_biome_cache (biome_id_to_name_map,
 	for name, def in pairs (biome_definitions) do
 		assert (type (def) == "table")
 		assert (type (name) == "string")
-		assert (type (def.temperature) == "number")
-		assert (not def.has_precipitation
-			or type (def.has_precipitation) == "boolean")
-		assert (not def.temperature_modifier
-			or type (def.temperature_modifier) == "string")
+		if biome_data_type == "levelgen_data" then
+			assert (type (def.temperature) == "number")
+			assert (not def.has_precipitation
+				or type (def.has_precipitation) == "boolean")
+			assert (not def.temperature_modifier
+				or type (def.temperature_modifier) == "string")
+		elseif biome_data_type == "engine_data" then
+			assert (not def._mcl_biome_type
+				or type (def._mcl_biome_type) == "string")
+		end
 	end
 	registered_biomes = biome_definitions
 end
@@ -262,6 +274,37 @@ local RAIN = { "default", }
 local SNOW = { "cold", }
 local BOTH = { "cold", "default", }
 
+local function get_column_type (name, def, x, y, z)
+	if name == nil then
+		return 0x0
+	elseif server_biome_system == "levelgen_data" then
+		if def.has_precipitation then
+			if is_temp_rainy (name, x, y + 64, -z - 1) then
+				return COLUMN_RAIN
+			else
+				return COLUMN_SNOW
+			end
+		end
+		return 0x0
+	elseif server_biome_system == "engine_data" then
+		local biome_type = def._mcl_biome_type
+		if biome_type == "hot" then
+			return 0x0
+		elseif biome_type == "cold" then
+			if name == "Taiga" and y > 140
+				or name == "MegaSpruceTaiga" and y > 100 then
+				return COLUMN_SNOW
+			end
+			return COLUMN_RAIN
+		elseif biome_type == "snowy" then
+			return COLUMN_SNOW
+		else
+			return COLUMN_RAIN
+		end
+	end
+	assert (false)
+end
+
 function mcl_localplayer.build_column_visibility_map (x, y, z, map, range)
 	local all = 0
 	local i = 1
@@ -270,17 +313,10 @@ function mcl_localplayer.build_column_visibility_map (x, y, z, map, range)
 		for x = x - range, x + range do
 			local name = index_biomes (x, y, z)
 			local def = registered_biomes[name]
-			if name and def.has_precipitation then
-				if is_temp_rainy (name, x, y + 64, -z - 1) then
-					map[i] = COLUMN_RAIN
-					all = bor (all, COLUMN_RAIN)
-				else
-					map[i] = COLUMN_SNOW
-					all = bor (all, COLUMN_SNOW)
-				end
-			else
-				map[i] = 0x0
-			end
+			local column_type = get_column_type (name, def,
+							     x, y, z)
+			map[i] = column_type
+			all = bor (all, column_type)
 			i = i + 1
 		end
 	end
