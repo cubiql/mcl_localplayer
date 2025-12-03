@@ -25,7 +25,7 @@ local root = {
 local event_start = nil
 
 function mcl_localplayer.profile (name)
-	local clock = os.clock ()
+	local clock = core.get_us_time ()
 	local count = #eventpdl
 	local tbl
 	local parent = count > 0 and eventpdl[count] or nil
@@ -54,11 +54,11 @@ function mcl_localplayer.profile (name)
 	end
 
 	eventpdl[count + 1] = tbl
-	event_start = os.clock ()
+	event_start = core.get_us_time ()
 end
 
 function mcl_localplayer.profile_done (name)
-	local clock = os.clock ()
+	local clock = core.get_us_time ()
 	local count = #eventpdl
 	local tbl = eventpdl[count]
 	local parent = eventpdl[count - 1]
@@ -71,7 +71,7 @@ function mcl_localplayer.profile_done (name)
 	if count > 1 then
 		parent.total = parent.total + tbl.this_total
 		parent.this_total = parent.this_total + tbl.this_total
-		event_start = os.clock ()
+		event_start = core.get_us_time ()
 	end
 	assert (tbl.name == name)
 	return tbl
@@ -99,8 +99,8 @@ end
 local function print_record (tbl, total, parent, level)
 	print (string.format ("%-46s %15.2f %15.2f %6.2f%%  %6.2f%% %6.2f%% %6.2f%%",
 			string.rep ('-', level * 2) .. tbl.name,
-			tbl.direct * 1000 * 1000,
-			tbl.total * 1000 * 1000,
+			tbl.direct,
+			tbl.total,
 			(tbl.direct / total) * 100,
 			(tbl.direct / parent) * 100,
 			(tbl.total / total) * 100,
@@ -136,7 +136,19 @@ function mcl_localplayer.profiler_collect (data, dtime)
 		flush_tables (prof_time)
 		prof_time = 0
 	end
+	event_start = nil
 end
+
+local toplevel_exists = false
+
+core.register_globalstep (function (dtime)
+	if toplevel_exists then
+		local root = mcl_localplayer.profile_done ("globalstep")
+		mcl_localplayer.profiler_collect (root, dtime)
+	end
+	toplevel_exists = true
+	mcl_localplayer.profile ("globalstep")
+end)
 
 else
 
@@ -171,7 +183,10 @@ dofile (core.get_modpath (modname) .. "/effects.lua")
 -- Client-server communication.
 ------------------------------------------------------------------------
 
-local PROTO_VERSION = 7
+local profile = mcl_localplayer.profile
+local profile_done = mcl_localplayer.profile_done
+
+local PROTO_VERSION = 8
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'
@@ -502,9 +517,11 @@ local function receive_modchannel_message (channel_name, sender, message)
 			print (" server->client " .. message:sub (1, 127) .. "\n")
 		end
 
+		profile ("Client receive_modchannel_message")
 		local msgtype = message:sub (1, 2)
 		local payload = message:sub (3, #message)
 
+		profile ("Client process " .. msgtype)
 		if msgtype == CLIENTBOUND_HELLO then
 			process_clientbound_hello (payload)
 		elseif mcl_localplayer.localplayer_initialized then
@@ -646,6 +663,8 @@ local function receive_modchannel_message (channel_name, sender, message)
 				mcl_localplayer.import_biome_data (index_len, index, split[2])
 			end
 		end
+		profile_done ("Client process " .. msgtype)
+		profile_done ("Client receive_modchannel_message")
 	end
 end
 

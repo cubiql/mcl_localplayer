@@ -3,7 +3,7 @@
 ------------------------------------------------------------------------
 
 local profile = mcl_localplayer.profile
-local profile_done = mcl_localplayer.profile
+local profile_done = mcl_localplayer.profile_done
 
 local insert = table.insert
 
@@ -81,14 +81,12 @@ local function unhashmapblock (hash)
 end
 
 function mcl_localplayer.step_biome_cache (self_pos)
-	profile ("update biome cache")
 	local bx = floor (self_pos.x / 16)
 	local by = floor (self_pos.y / 16)
 	local bz = floor (self_pos.z / 16)
 	if bx == biome_cache_center.x
 		and by == biome_cache_center.y
 		and bz == biome_cache_center.z then
-		profile_done ("update biome cache")
 		return
 	end
 
@@ -128,16 +126,17 @@ function mcl_localplayer.step_biome_cache (self_pos)
 	if #discard > 0 then
 		mcl_localplayer.send_discard_biome_data (discard)
 	end
-	profile_done ("update biome cache")
 end
 
 core.register_globalstep (function (_)
 	if biome_data_initialized then
+		profile ("Level update biome cache")
 		local self_pos = core.localplayer:get_pos ()
 		self_pos.x = floor (self_pos.x + 0.5)
 		self_pos.y = floor (self_pos.y + 0.5)
 		self_pos.z = floor (self_pos.z + 0.5)
 		mcl_localplayer.step_biome_cache (self_pos)
+		profile_done ("Level update biome cache")
 	end
 end)
 

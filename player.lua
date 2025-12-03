@@ -38,6 +38,8 @@ local localplayer = {
 	water_friction = 0.8,
 	water_velocity = 0.4,
 	depth_strider_level = 0,
+	soul_speed_level = 0,
+	_last_soul_speed_bonus = -1,
 	_previously_floating = false,
 	_last_standin = nil,
 	_last_standon = nil,
@@ -399,13 +401,54 @@ function localplayer:get_look_dir ()
 	return core.camera:get_look_dir () * (mode ~= 3 and 1 or -1)
 end
 
+local SPEED_MODIFIER_SOUL_SPEED = "mcl_mobs:soul_speed_movement_modifier"
+
+function localplayer:node_changed (standon)
+	if not standon.groups.soul_block
+		or self.fall_flying
+		or self.soul_speed_level <= 0 then
+		if self._last_soul_speed_bonus ~= -1 then
+			if mcl_localplayer.debug then
+				print ("Soul speed factor removed")
+			end
+			self._last_soul_speed_bonus = -1
+			self:remove_physics_factor ("movement_speed", SPEED_MODIFIER_SOUL_SPEED)
+		end
+	else
+		local level = self.soul_speed_level
+		local f = 0.03 * (1.0 + level * 0.35) * 20.0
+		if self._last_soul_speed_bonus ~= f then
+			self:add_physics_factor ("movement_speed", SPEED_MODIFIER_SOUL_SPEED,
+						 f, "add", false)
+			self._last_soul_speed_bonus = f
+			if mcl_localplayer.debug then
+				print ("Soul speed factor: ", f)
+			end
+		end
+	end
+end
+
+function localplayer:pre_motion_step ()
+	profile ("LocalPlayer pre_motion_step")
+	local last_standon = self._last_standon
+		and mcl_localplayer.node_defs[self._last_standon.name]
+		or EMPTY_NODE
+	local standon = self.standon
+		and mcl_localplayer.node_defs[self.standon.name]
+		or EMPTY_NODE
+	if last_standon ~= standon then
+		self:node_changed (standon)
+	end
+	profile_done ("LocalPlayer pre_motion_step")
+end
+
 function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	profile ("LocalPlayer motion_step")
 	profile ("LocalPlayer motion_step prologue")
 	local acc_dir = self.acc_dir
 	local acc_speed = self.movement_speed
-	-- core.get_node_def is REALLY expensive because it
-	-- reconstructing node definitions every time.  Avoid it like
+	-- core.get_node_def is tremendously expensive because it
+	-- reconstructs node definitions on every call.  Avoid it like
 	-- the plague.
 	local last_standon = self._last_standon
 		and mcl_localplayer.node_defs[self._last_standon.name]
@@ -440,7 +483,10 @@ function localplayer:motion_step (v, self_pos, moveresult, controls, params)
 	local liquidtype = self._last_liquidtype
 
 	if standon and standon._mcl_velocity_factor and touching_ground then
-		velocity_factor = standon._mcl_velocity_factor
+		if self.soul_speed_level <= 0
+			or not standon.groups.soul_block then
+			velocity_factor = standon._mcl_velocity_factor
+		end
 	end
 	self.jump_timer = self.jump_timer - 1
 
@@ -1032,7 +1078,7 @@ function localplayer.on_step (dtime, moveresult, params)
 	local self = localplayer
 	local control = player:get_control ()
 	local self_pos = self.localplayer:get_pos ()
-	profile ("on_step")
+	profile ("LocalPlayer on_step")
 
 	if not moveresult then
 		moveresult = {
@@ -1092,7 +1138,7 @@ function localplayer.on_step (dtime, moveresult, params)
 			self:apply_pose (pose)
 		end
 		self:tick_animation (control, dtime)
-		profile_done ("LocalPlayer mounting tests")
+		profile_done ("on_step")
 		return
 	end
 	profile_done ("LocalPlayer mounting tests")
@@ -1242,6 +1288,7 @@ function localplayer.on_step (dtime, moveresult, params)
 				self._stuck_in = nil
 			end
 			self.localplayer:set_touching_ground (self.touching_ground)
+			self:pre_motion_step ()
 			v = self:motion_step (v, adj_pos, moveresult, control, params)
 			self:post_motion_step (v, adj_pos, control, params)
 
@@ -1285,8 +1332,7 @@ function localplayer.on_step (dtime, moveresult, params)
 		self.default_switchtime = t
 	end
 	self._was_jumping = control.jump
-	local root = profile_done ("on_step")
-	mcl_localplayer.profiler_collect (root, dtime)
+	profile_done ("LocalPlayer on_step")
 end
 
 function mcl_localplayer.add_cam_offsets (y, x)
@@ -1462,6 +1508,19 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 			error ("Invalid enchantment data")
 		end
 		localplayer.depth_strider_level = data.depth_strider_level
+	end
+	if data.soul_speed_level ~= nil then
+		if mcl_localplayer.proto < 8 then
+			error ("Soul speed level specified on protocol < 8")
+		end
+		if type (data.soul_speed_level) ~= "number" then
+			error ("Invalid soul speed level")
+		end
+		localplayer.soul_speed_level = data.soul_speed_level
+		local standon = localplayer.standon
+			and mcl_localplayer.node_defs[localplayer.standon.name]
+			or EMPTY_NODE
+		localplayer:node_changed (standon)
 	end
 end
 
