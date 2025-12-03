@@ -402,17 +402,27 @@ function localplayer:get_look_dir ()
 end
 
 local SPEED_MODIFIER_SOUL_SPEED = "mcl_mobs:soul_speed_movement_modifier"
+local FOV_MODIFIER_SOUL_SPEED = "mcl_mobs:soul_speed_fov_modifier"
 
-function localplayer:node_changed (standon)
+function localplayer:node_changed (standon, always_update)
 	if not standon.groups.soul_block
-		or self.fall_flying
 		or self.soul_speed_level <= 0 then
-		if self._last_soul_speed_bonus ~= -1 then
+		if self._last_soul_speed_bonus ~= -1
+			and (always_update
+			     or self.fall_flying
+			     -- Minecraft specifically declines to
+			     -- remove soul speed modifiers if the
+			     -- player is standing in air; it does not
+			     -- do so if if a jump is registered while
+			     -- standing in a torch, for example.
+			     or (not self.standon
+				 or self.standon.name ~= "air")) then
 			if mcl_localplayer.debug then
 				print ("Soul speed factor removed")
 			end
 			self._last_soul_speed_bonus = -1
 			self:remove_physics_factor ("movement_speed", SPEED_MODIFIER_SOUL_SPEED)
+			self:remove_physics_factor ("fov_factor", FOV_MODIFIER_SOUL_SPEED)
 		end
 	else
 		local level = self.soul_speed_level
@@ -420,6 +430,8 @@ function localplayer:node_changed (standon)
 		if self._last_soul_speed_bonus ~= f then
 			self:add_physics_factor ("movement_speed", SPEED_MODIFIER_SOUL_SPEED,
 						 f, "add", false)
+			self:add_physics_factor ("fov_factor", FOV_MODIFIER_SOUL_SPEED,
+						 level * 0.05, "add", false)
 			self._last_soul_speed_bonus = f
 			if mcl_localplayer.debug then
 				print ("Soul speed factor: ", f)
@@ -428,7 +440,14 @@ function localplayer:node_changed (standon)
 	end
 end
 
-function localplayer:pre_motion_step ()
+function localplayer:reapply_soul_speed_modifiers ()
+	local standon = localplayer.standon
+		and mcl_localplayer.node_defs[localplayer.standon.name]
+		or EMPTY_NODE
+	localplayer:node_changed (standon, true)
+end
+
+function localplayer:pre_motion_step (params)
 	profile ("LocalPlayer pre_motion_step")
 	local last_standon = self._last_standon
 		and mcl_localplayer.node_defs[self._last_standon.name]
@@ -437,7 +456,7 @@ function localplayer:pre_motion_step ()
 		and mcl_localplayer.node_defs[self.standon.name]
 		or EMPTY_NODE
 	if last_standon ~= standon then
-		self:node_changed (standon)
+		self:node_changed (standon, params.flying)
 	end
 	profile_done ("LocalPlayer pre_motion_step")
 end
@@ -858,6 +877,7 @@ function localplayer:set_fall_flying (fall_flying)
 		end
 	elseif fall_flying then
 		self.fall_flying = true
+		self:reapply_soul_speed_modifiers ()
 		self.rocket_ticks = 0
 	end
 end
@@ -1288,7 +1308,7 @@ function localplayer.on_step (dtime, moveresult, params)
 				self._stuck_in = nil
 			end
 			self.localplayer:set_touching_ground (self.touching_ground)
-			self:pre_motion_step ()
+			self:pre_motion_step (params)
 			v = self:motion_step (v, adj_pos, moveresult, control, params)
 			self:post_motion_step (v, adj_pos, control, params)
 
@@ -1517,10 +1537,7 @@ function mcl_localplayer.process_clientbound_player_capabilities (payload)
 			error ("Invalid soul speed level")
 		end
 		localplayer.soul_speed_level = data.soul_speed_level
-		local standon = localplayer.standon
-			and mcl_localplayer.node_defs[localplayer.standon.name]
-			or EMPTY_NODE
-		localplayer:node_changed (standon)
+		localplayer:reapply_soul_speed_modifiers ()
 	end
 end
 
