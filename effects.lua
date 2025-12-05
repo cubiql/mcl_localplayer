@@ -284,20 +284,26 @@ local function enable_climate_effects (effects, map, x, z)
 	end
 end
 
+local mathsqrt = math.sqrt
+local mathmax = math.max
+local BASE_GAIN = 1.0 / mathsqrt (11.0)
+local GAIN_SCALE = 1.0 / (1.0 - BASE_GAIN)
+
 local function get_sound_gain (self_pos)
 	if current_climate == "default" then
 		local x = floor (self_pos.x + 0.5)
 		local y = floor (self_pos.y + 0.5)
 		local z = floor (self_pos.z + 0.5)
-		local nearest = core.scan_position_height (x, y, z, 7)
-		if nearest and mathabs (nearest.y - floor (self_pos.y)) <= 7 then
-			return 1.0
-		else
-			return 0.0
+		local nearest = core.scan_position_height (x, y, z, 10)
+		if nearest then
+			local d = mathabs (nearest.y - floor (self_pos.y))
+			if d <= 10 then
+				local g = (1.0 / mathsqrt (mathmax (1, d))) - BASE_GAIN
+				return g * GAIN_SCALE
+			end
 		end
-	else
-		return 0.0
 	end
+	return 0.0
 end
 
 function mcl_localplayer.tick_effects (self_pos, dtime)
@@ -353,7 +359,7 @@ function mcl_localplayer.tick_effects (self_pos, dtime)
 		if gain > 0.0 and not sound_handle then
 			sound_handle = core.sound_play ({
 				name = "weather_rain",
-				gain = 1.0,
+				gain = gain,
 			}, { loop = true, })
 		end
 		if sound_handle then
