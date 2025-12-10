@@ -413,28 +413,28 @@ if detect_luajit () then
 		local along = 0x100000000ull * a[2] + a[1]
 		local value = rol (along, k)
 		a[1] = tonumber (band (value, 0xffffffffull))
-		a[2] = tonumber (rshift (value, 32ull))
+		a[2] = tonumber (rshift (value, 32))
 	end
 
 	local function shrull (a, k)
 		local along = 0x100000000ull * a[2] + a[1]
 		local value = rshift (along, k)
 		a[1] = tonumber (band (value, 0xffffffffull))
-		a[2] = tonumber (rshift (value, 32ull))
+		a[2] = tonumber (rshift (value, 32))
 	end
 
 	local function ashrull (a, k)
 		local along = 0x100000000ull * a[2] + a[1]
 		local value = arshift (along, k)
 		a[1] = tonumber (band (value, 0xffffffffull))
-		a[2] = tonumber (rshift (value, 32ull))
+		a[2] = tonumber (rshift (value, 32))
 	end
 
 	local function shlull (a, k)
 		local along = 0x100000000ull * a[2] + a[1]
 		local value = lshift (along, k)
 		a[1] = tonumber (band (value, 0xffffffffull))
-		a[2] = tonumber (rshift (value, 32ull))
+		a[2] = tonumber (rshift (value, 32))
 	end
 
 	local function mul2ull (a, b)
