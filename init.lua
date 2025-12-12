@@ -19,6 +19,8 @@ local root = {
 	total = 0,
 	direct = 0,
 	this_total = 0,
+	count = 0,
+	count_total = 0,
 	referents = {},
 }
 
@@ -46,6 +48,8 @@ function mcl_localplayer.profile (name)
 			this_total = 0,
 			total = 0,
 			direct = 0,
+			count = 0,
+			count_total = 1,
 			referents = {},
 		}
 		if parent then
@@ -68,6 +72,7 @@ function mcl_localplayer.profile_done (name)
 	tbl.total = tbl.total + total
 	tbl.direct = tbl.direct + total
 	tbl.this_total = tbl.this_total + total
+	tbl.count = tbl.count + 1
 	if count > 1 then
 		parent.total = parent.total + tbl.this_total
 		parent.this_total = parent.this_total + tbl.this_total
@@ -80,6 +85,8 @@ end
 local function merge_tables (proto, tbl)
 	proto.total = proto.total + tbl.total
 	proto.direct = proto.direct + tbl.direct
+	proto.count = proto.count + tbl.count
+	proto.count_total = proto.count_total + tbl.count_total
 
 	for k, v in pairs (tbl.referents) do
 		if proto.referents[k] then
@@ -97,10 +104,12 @@ local function compare_total (a, b)
 end
 
 local function print_record (tbl, total, parent, level)
-	print (string.format ("%-46s %15.2f %15.2f %6.2f%%  %6.2f%% %6.2f%% %6.2f%%",
+	print (string.format ("%-46s %15.2f %15.2f %16.2f %16.2f %6.2f%%  %6.2f%% %6.2f%% %6.2f%%",
 			string.rep ('-', level * 2) .. tbl.name,
-			tbl.direct,
-			tbl.total,
+			tbl.direct / tbl.count_total, -- Global averages.
+			tbl.total / tbl.count_total,
+			tbl.direct / tbl.count, -- Individual averages.
+			tbl.total / tbl.count,
 			(tbl.direct / total) * 100,
 			(tbl.direct / parent) * 100,
 			(tbl.total / total) * 100,
@@ -118,13 +127,15 @@ end
 local function flush_tables (dtime)
 	-- Begin printing records.
 	print (string.format ("After %.2f seconds of activity: ", dtime))
-	print ("                                                   DIRECT (us)      TOTAL (us)  %TOTAL  %PARENT  %TOTAL %PARENT")
+	print ("                                                   DIRECT (us)      TOTAL (us)  AVG DIRECT (us)   AVG TOTAL (us)  %TOTAL  %PARENT  %TOTAL %PARENT")
 	print_record (root, root.total, root.total, 0)
 
 	-- Reset root.
 	root.referents = {}
 	root.total = 0.0
 	root.direct = 0.0
+	root.count = 0
+	root.count_total = 0
 end
 
 local PRINT_INTERVAL = 3.0

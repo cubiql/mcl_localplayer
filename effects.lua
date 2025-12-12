@@ -11,6 +11,9 @@
 local floor = math.floor
 local mathabs = math.abs
 
+local profile = mcl_localplayer.profile
+local profile_done = mcl_localplayer.profile_done
+
 ------------------------------------------------------------------------
 -- Skybox & ambient lighting.
 ------------------------------------------------------------------------
@@ -306,7 +309,14 @@ local function get_sound_gain (self_pos)
 	return 0.0
 end
 
+if core.global_exists ("jit") then
+	jit.opt.start ("maxmcode=40960", "maxtrace=100000",
+		       "loopunroll=35", "maxside=8000", "maxsnap=1000",
+		       "maxrecord=8000")
+end
+
 function mcl_localplayer.tick_effects (self_pos, dtime)
+	profile ("Level tick effects")
 	local ylevel = floor (self_pos.y + 0.5)
 	local dim = y_to_dimension (ylevel)
 	local lighting = lighting_by_dimension[dim]
@@ -346,9 +356,11 @@ function mcl_localplayer.tick_effects (self_pos, dtime)
 		local x, z = floor (self_pos.x + 0.5),
 			floor (self_pos.z + 0.5)
 		if have_dynamic_climate_effects () then
+			profile ("Level dynamic effect computation")
 			map = effect_visibility_map
 			effects = build_column_visibility_map (x, ylevel, z, map,
 							       EFFECT_VISIBILITY_MAP_RANGE)
+			profile_done ("Level dynamic effect computation")
 		else
 			map = nil
 			effects = { current_climate, }
@@ -378,6 +390,7 @@ function mcl_localplayer.tick_effects (self_pos, dtime)
 			sound_handle = nil
 		end
 	end
+	profile_done ("Level tick effects")
 end
 
 core.register_globalstep (function (dtime)

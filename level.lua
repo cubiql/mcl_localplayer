@@ -382,6 +382,7 @@ function mcl_localplayer.index_biomes (x, y, z)
 	if server_biome_seed then
 		dim = dimension_at_layer (y)
 		if dim then
+			profile ("Level biome coordinate conversion")
 			-- Convert X, Y, Z into level positions.
 			local y_offset = dim.y_offset
 			local lx, ly, lz = x, y + y_offset, -z - 1
@@ -396,6 +397,7 @@ function mcl_localplayer.index_biomes (x, y, z)
 			bx = arshift (qx, 2)
 			by = arshift (qy, 2)
 			bz = arshift (qz, 2)
+			profile_done ("Level biome coordinate conversion")
 		end
 	end
 	if not dim then
@@ -410,10 +412,13 @@ function mcl_localplayer.index_biomes (x, y, z)
 	local idx = block_index (bx, by, bz)
 
 	if biome_data_initialized and idx and biome_cache_last[idx] then
-		return index_biome_list (biome_cache_last[idx][1],
-					 biome_cache_last[idx][2],
-					 band (qx, 3), band (qy, 3),
-					 band (qz, 3))
+		profile ("Level index_biome_list")
+		local rc = index_biome_list (biome_cache_last[idx][1],
+					     biome_cache_last[idx][2],
+					     band (qx, 3), band (qy, 3),
+					     band (qz, 3))
+		profile_done ("Level index_biome_list")
+		return rc
 	end
 	return nil
 end
@@ -443,6 +448,7 @@ local function get_temperature_in_biome (biome, x, y, z)
 
 	-- Apply temperature modifier.
 	if biome.temperature_modifier == "frozen" then
+		profile ("Level sample biome freezing noise")
 		local temp_offset
 			= FROZEN_BIOME_NOISE (x * 0.05, z * 0.05) * 7.0
 		local selector = BIOME_SELECTOR_NOISE (x * 0.2, z * 0.2)
@@ -452,18 +458,23 @@ local function get_temperature_in_biome (biome, x, y, z)
 				temp = 0.2
 			end
 		end
+		profile_done ("Level sample biome freezing noise")
 	end
 
 	-- And altitude chill.
 	if y > 80 then
+		profile ("Level sample altitude chill noise")
 		local chill = TEMPERATURE_NOISE (x / 8.0, z / 8.0) * 8.0
+		profile_done ("Level sample biome altitude chill noise")
 		return temp - (chill + y - 80) * 0.05 / 40
 	end
 	return temp
 end
 
 local function is_temp_rainy (biome, x, y, z)
+	profile ("Level is_temp_rainy")
 	local temp = get_temperature_in_biome (biome, x, y, z)
+	profile_done ("Level is_temp_rainy")
 	return temp >= 0.15
 end
 
@@ -514,6 +525,7 @@ function mcl_localplayer.build_column_visibility_map (x, y, z, map, range)
 	local all = 0
 	local i = 1
 
+	profile ("Level build_column_visibility_map")
 	for z = z - range, z + range do
 		for x = x - range, x + range do
 			-- Sample biomes at the surface if it is not
@@ -530,6 +542,7 @@ function mcl_localplayer.build_column_visibility_map (x, y, z, map, range)
 			i = i + 1
 		end
 	end
+	profile_done ("Level build_column_visibility_map")
 
 	if all == 0 then
 		return NONE
@@ -547,4 +560,3 @@ end
 function mcl_localplayer.have_dynamic_climate_effects ()
 	return biome_data_initialized
 end
-
