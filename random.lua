@@ -334,18 +334,19 @@ local function stringtoull (x, str)
 	return true
 end
 
+local tmp = ull (0, 0)
+
 local function mul2ull (a, b)
 	local lo, hi = a[1], a[2]
-	mulull (a, b[1])
+	local lb, hb = b[1], b[2]
+	mulull (a, lb)
 	a[1], lo = lo, a[1]
 	a[2], hi = hi, a[2]
-	mulull (a, b[2])
+	mulull (a, hb)
 	shlull (a, 32)
-	lo, b[1] = b[1], lo
-	hi, b[2] = b[2], hi
-	addull (a, b)
-	b[1] = lo
-	b[2] = hi
+	tmp[1] = lo
+	tmp[2] = hi
+	addull (a, tmp)
 end
 
 if detect_luajit () then
@@ -754,3 +755,88 @@ if true then
 		end
 	end
 end
+
+------------------------------------------------------------------------
+-- Biome position randomization.
+------------------------------------------------------------------------
+
+-- Simple LCG.
+local MULTIPLIER = ull (0x5851f42d, 0x4c957f2d)
+local INCREMENT = ull (0x14057b7e, 0xf767814f)
+
+local tmp = ull (0, 0)
+
+local function lcj_next (seed, increment)
+	tmp[1] = seed[1]
+	tmp[2] = seed[2]
+
+	-- seed = (seed * (seed * MULTIPLIER + INCREMENT))
+	mul2ull (tmp, MULTIPLIER)
+	addull (tmp, INCREMENT)
+	mul2ull (seed, tmp)
+	addull (seed, increment)
+end
+
+if detect_luajit () then
+	local str = [[
+	local band = bit.band
+	local rshift = bit.rshift
+	local tonumber = tonumber
+	local function lcj_next (seed, increment)
+		local cseed = 0x100000000ull * seed[2] + seed[1]
+		local increment
+			= 0x100000000ull * increment[2] + increment[1]
+		cseed = cseed * (cseed * 0x5851f42d4c957f2dull
+				 + 0x14057b7ef767814full)
+			+ increment
+		seed[1] = tonumber (band (cseed, 0xffffffff))
+		seed[2] = tonumber (rshift (cseed, 32))
+	end
+	return lcj_next
+]]
+	local fn = loadstring (str)
+	lcj_next = fn ()
+end
+
+mcl_levelgen.lcj_next = lcj_next
+
+-- luacheck: push ignore 511
+if true then
+	local seed = ull (99012, 99374)
+	local incr = ull (339487593, 444335790)
+	local function test (seed, value)
+		if false then
+			print (seed)
+		else
+			lj_test_assert (seed == value)
+		end
+	end
+	-- print ("seed: ", tostringull (seed), "incr: ", tostringull (incr))
+	lcj_next (seed, incr)
+	test (tostringull (seed), "226211238292676308")
+	lcj_next (seed, incr)
+	test (tostringull (seed), "6872378287299025514")
+	lcj_next (seed, incr)
+	test (tostringull (seed), "17378588871388729976")
+	lcj_next (seed, incr)
+	test (tostringull (seed), "1242224386663429366")
+	lcj_next (seed, incr)
+	test (tostringull (seed), "1805386566417395244")
+	lcj_next (seed, incr)
+	test (tostringull (seed), "12805274662464243346")
+	lcj_next (seed, incr)
+	test (tostringull (seed), "14060706522678048432")
+	lcj_next (seed, incr)
+	test (tostringull (seed), "12111425423540952062")
+	lcj_next (seed, incr)
+	test (tostringull (seed), "7280341539614422212")
+	lcj_next (seed, incr)
+	test (tostringull (seed), "7655099306983539706")
+
+	local seed1 = ull (0, 0)
+	stringtoull (seed1, "2520521153677540398")
+	stringtoull (incr, "162")
+	lcj_next (seed1, incr)
+	test (tostringull (seed1), "14919993831747797192")
+end
+-- luacheck: pop

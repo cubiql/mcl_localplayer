@@ -186,7 +186,7 @@ dofile (core.get_modpath (modname) .. "/effects.lua")
 local profile = mcl_localplayer.profile
 local profile_done = mcl_localplayer.profile_done
 
-local PROTO_VERSION = 8
+local PROTO_VERSION = 9
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'
@@ -493,17 +493,26 @@ local function process_clientbound_hello (payload)
 							= handshake.biome_definitions
 						local biome_data_type
 							= handshake.biome_data_type
+						local biome_seed = nil
+						local dimensions = nil
 						if handshake.proto == 6 then
 							biome_data_type = "engine_data"
 						end
+						if handshake.proto >= 9 then
+							biome_seed = handshake.biome_seed
+							dimensions = handshake.registered_dimensions
+						end
 						mcl_localplayer.enable_biome_cache (id_to_name_map,
 										    biome_definitions,
-										    biome_data_type)
+										    biome_data_type,
+										    biome_seed,
+										    dimensions)
 					end
 				end
 
 				-- Initialize the CSM.
-				print ("*** Mineclonia client-side mod initialized")
+				print (string.format ("*** Mineclonia CSM mod initialized (protocol=%d)",
+						      mcl_localplayer.proto))
 				mcl_localplayer.init_player ()
 				mcl_localplayer.localplayer_initialized = true
 			end

@@ -9,9 +9,12 @@ local insert = table.insert
 
 local floor = math.floor
 local mathabs = math.abs
+local mathmax = math.max
+local mathmin = math.min
 
 local biome_data_initialized = false
 local server_biome_system
+local server_biome_seed
 
 local BIOME_CACHE_RANGE = 4
 local BIOME_CACHE_DIAMETER = BIOME_CACHE_RANGE * 2 + 1
@@ -32,10 +35,12 @@ end
 
 local id_to_name_map = {}
 local registered_biomes = {}
+local registered_dimensions = {}
 
 function mcl_localplayer.enable_biome_cache (biome_id_to_name_map,
 					     biome_definitions,
-					     biome_data_type)
+					     biome_data_type, biome_seed,
+					     dimensions)
 	biome_data_initialized = true
 	if biome_data_type ~= "levelgen_data"
 		and biome_data_type ~= "engine_data" then
@@ -65,6 +70,27 @@ function mcl_localplayer.enable_biome_cache (biome_id_to_name_map,
 		end
 	end
 	registered_biomes = biome_definitions
+	if biome_seed then
+		assert (biome_data_type == "levelgen_data",
+			"Biome seed specified with mcl_levelgen disabled")
+		assert (type (biome_seed) == "table"
+			and type (biome_seed[1]) == "number"
+			and type (biome_seed[2]) == "number")
+		server_biome_seed = biome_seed
+
+		-- This data is only material when mcl_levelgen is
+		-- enabled on the server and this data is required for
+		-- correct biome indexing.
+		assert (type (dimensions) == "table")
+		for _, dim in ipairs (dimensions) do
+			assert (type (dim.y_global) == "number")
+			assert (type (dim.y_global_block) == "number")
+			assert (type (dim.y_max) == "number")
+			assert (type (dim.y_offset) == "number")
+			assert (type (dim.id) == "string")
+		end
+		registered_dimensions = dimensions
+	end
 end
 
 local function hashmapblock (x, y, z)
@@ -179,8 +205,161 @@ function mcl_localplayer.import_biome_data (index_len, index, index_payload)
 	end
 end
 
+function mcl_localplayer.dimension_at_layer (y)
+	for _, dim in ipairs (registered_dimensions) do
+		if y >= dim.y_global and y <= dim.y_max then
+			return dim
+		end
+	end
+
+	return nil
+end
+
+local dimension_at_layer = mcl_localplayer.dimension_at_layer
+
+------------------------------------------------------------------------
+-- Biome position randomization.
+------------------------------------------------------------------------
+
 local band = bit.band
 local arshift = bit.arshift
+local rshift = bit.rshift
+local huge = math.huge
+
+local tmp, tmp1 = mcl_levelgen.ull (0, 0), mcl_levelgen.ull (0, 0)
+local lcj_next = mcl_levelgen.lcj_next
+local extkull = mcl_levelgen.extkull
+local ashrull = mcl_levelgen.ashrull
+
+local function munge_distance (seed, tqx, tqy, tqz, tpx, tpy, tpz)
+	tmp[1], tmp[2] = seed[1], seed[2]
+	local tmp1 = tmp1
+	extkull (tmp1, tqx)
+	lcj_next (tmp, tmp1)
+	extkull (tmp1, tqy)
+	lcj_next (tmp, tmp1)
+	extkull (tmp1, tqz)
+	lcj_next (tmp, tmp1)
+	extkull (tmp1, tqx)
+	lcj_next (tmp, tmp1)
+	extkull (tmp1, tqy)
+	lcj_next (tmp, tmp1)
+	extkull (tmp1, tqz)
+	lcj_next (tmp, tmp1)
+	tmp1[1], tmp1[2] = tmp[1], tmp[2]
+	ashrull (tmp1, 24)
+	local bp = band (tmp1[1], 1023) / 1024.0
+	local dx = (bp - 0.5) * 0.9
+
+	lcj_next (tmp, seed)
+	tmp1[1], tmp1[2] = tmp[1], tmp[2]
+	ashrull (tmp1, 24)
+	local bp = band (tmp1[1], 1023) / 1024.0
+	local dy = (bp - 0.5) * 0.9
+
+	lcj_next (tmp, seed)
+	tmp1[1], tmp1[2] = tmp[1], tmp[2]
+	ashrull (tmp1, 24)
+	local bp = band (tmp1[1], 1023) / 1024.0
+	local dz = (bp - 0.5) * 0.9
+	return (tpz + dz) * (tpz + dz)
+		+ (tpy + dy) * (tpy + dy)
+		+ (tpx + dx) * (tpx + dx)
+end
+
+-- Return a displaced version of the quart position of the block
+-- position X, Y, Z.  This position is lightly randomized and is not
+-- consulted during biome generation, only when accessing generated
+-- biome data.
+--
+-- Value is guaranteed to fall within one QuartBlock's distance of X,
+-- Y, Z's absolute position on each axis.
+
+function mcl_localplayer.munge_biome_coords (seed, x, y, z)
+	x = x - 2
+	y = y - 2
+	z = z - 2
+	local qx = arshift (x, 2)
+	local qy = arshift (y, 2)
+	local qz = arshift (z, 2)
+	x = band (x, 3) / 4.0
+	y = band (y, 3) / 4.0
+	z = band (z, 3) / 4.0
+
+	local nearest_transform = 0
+	local max_distance = huge
+
+	for i = 0, 7 do
+		local dx = rshift (band (i, 4), 2)
+		local dy = rshift (band (i, 2), 1)
+		local dz = band (i, 1)
+		local dist = munge_distance (seed, qx + dx, qy + dy,
+					     qz + dz, x - dx, y - dy,
+					     z - dz)
+		if max_distance > dist then
+			nearest_transform = i
+			max_distance = dist
+		end
+	end
+
+	x = rshift (band (nearest_transform, 4), 2)
+	y = rshift (band (nearest_transform, 2), 1)
+	z = band (nearest_transform, 1)
+	return qx + x, qy + y, qz + z
+end
+
+if mcl_levelgen.detect_luajit () then
+	local str = [[
+	local tonumber = tonumber
+	local rshift = bit.rshift
+	local arshift = bit.arshift
+	local lshift = bit.lshift
+	local band = bit.band
+
+	local function lcj_next (seed, increment)
+		return seed * (seed * 0x5851f42d4c957f2dll
+			       + 0x14057b7ef767814fll)
+			+ increment
+	end
+
+	local function munge_one (value)
+		local fixed = band (arshift (value, 24), 1023ll)
+		local bp = tonumber (fixed) / 1024.0
+		return (bp - 0.5) * 0.9
+	end
+
+	local function munge_distance (seed, tqx, tqy, tqz, tpx, tpy, tpz)
+		local seed = 0x100000000ll * seed[2] + seed[1]
+		local increment = seed
+		seed = lcj_next (seed, tqx * 1ll)
+		seed = lcj_next (seed, tqy * 1ll)
+		seed = lcj_next (seed, tqz * 1ll)
+		seed = lcj_next (seed, tqx * 1ll)
+		seed = lcj_next (seed, tqy * 1ll)
+		seed = lcj_next (seed, tqz * 1ll)
+
+		local dx = munge_one (seed)
+		seed = lcj_next (seed, increment)
+		local dy = munge_one (seed)
+		seed = lcj_next (seed, increment)
+		local dz = munge_one (seed)
+		return (tpz + dz) * (tpz + dz)
+			+ (tpy + dy) * (tpy + dy)
+			+ (tpx + dx) * (tpx + dx)
+	end
+
+	return munge_distance
+]]
+	local fn = loadstring (str)
+	munge_distance = fn ()
+end
+
+local munge_biome_coords = mcl_localplayer.munge_biome_coords
+
+------------------------------------------------------------------------
+-- Biome database indexing.
+------------------------------------------------------------------------
+
 local byte = string.byte
 local N = 4
 
@@ -196,18 +375,45 @@ local function index_biome_list (offset, list, qx, qy, qz)
 end
 
 function mcl_localplayer.index_biomes (x, y, z)
-	local bx = arshift (x, 4)
-	local by = arshift (y, 4)
-	local bz = arshift (z, 4)
+	local bx, by, bz
+	local qx, qy, qz
+	local dim = nil
+
+	if server_biome_seed then
+		dim = dimension_at_layer (y)
+		if dim then
+			-- Convert X, Y, Z into level positions.
+			local y_offset = dim.y_offset
+			local lx, ly, lz = x, y + y_offset, -z - 1
+			qx, qy, qz = munge_biome_coords (server_biome_seed,
+							 lx, ly, lz)
+
+			-- Restore the produced quart position to the
+			-- map coordinate system and convert it into a
+			-- block position
+			qz = -qz - 1
+			qy = qy - y_offset / 4
+			bx = arshift (qx, 2)
+			by = arshift (qy, 2)
+			bz = arshift (qz, 2)
+		end
+	end
+	if not dim then
+		qx = arshift (x, 2)
+		qy = arshift (y, 2)
+		qz = arshift (z, 2)
+		bx = arshift (x, 4)
+		by = arshift (y, 4)
+		bz = arshift (z, 4)
+	end
+
 	local idx = block_index (bx, by, bz)
 
 	if biome_data_initialized and idx and biome_cache_last[idx] then
-		local qx = band (arshift (x, 2), 3)
-		local qy = band (arshift (y, 2), 3)
-		local qz = band (arshift (z, 2), 3)
 		return index_biome_list (biome_cache_last[idx][1],
 					 biome_cache_last[idx][2],
-					 qx, qy, qz)
+					 band (qx, 3), band (qy, 3),
+					 band (qz, 3))
 	end
 	return nil
 end
@@ -310,10 +516,15 @@ function mcl_localplayer.build_column_visibility_map (x, y, z, map, range)
 
 	for z = z - range, z + range do
 		for x = x - range, x + range do
-			local name = index_biomes (x, y, z)
+			-- Sample biomes at the surface if it is not
+			-- too distant from the camera for
+			-- consistency with snow cover.
+			local y1 = core.get_position_height (x, z)
+			y1 = mathmax (mathmin (y1, y + 10), y - 10)
+			local name = index_biomes (x, y1, z)
 			local def = registered_biomes[name]
 			local column_type = get_column_type (name, def,
-							     x, y, z)
+							     x, y1, z)
 			map[i] = column_type
 			all = bor (all, column_type)
 			i = i + 1
