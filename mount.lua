@@ -33,6 +33,7 @@ local mob_table = {
 	_driver_eye_height = 0.0,
 	_last_sent_pos = nil,
 	_last_selt_vel = nil,
+	_sent_touching_ground = nil, -- Last sent vertical collision results.
 	animation = {
 	},
 	_current_animation = nil,
@@ -163,10 +164,6 @@ local horiz_collision = mcl_localplayer.horiz_collision
 
 function mob_table:toggle_step_height (enable_step_height)
 	if enable_step_height ~= self._previously_floating then
-		mcl_localplayer.send_configure_vehicle ({
-			touching_ground = enable_step_height,
-			id = self.object:get_id (),
-		})
 		self._previously_floating = enable_step_height
 		if enable_step_height then
 			self.object:set_property_overrides ({
@@ -189,6 +186,15 @@ function mob_table:test_collision (self_pos, moveresult, v)
 			self.touching_ground, self.ground_standon
 				= get_y_axis_collisions (self_pos, moveresult)
 		end
+	end
+
+	local touching_ground = self.touching_ground and true
+	if touching_ground ~= self._sent_touching_ground then
+		mcl_localplayer.send_configure_vehicle ({
+			touching_ground = self.touching_ground and true,
+			id = self.object:get_id (),
+		})
+		self._sent_touching_ground = touching_ground
 	end
 
 	-- Enable or disable stepheight according as this mob is
@@ -806,6 +812,7 @@ end
 
 function mob_table:stop_driving ()
 	self._previously_floating = nil
+	self._sent_touching_ground = nil
 	self.object:set_animation (nil)
 	self.object:set_animation_frame_speed (nil)
 	self.object:set_velocity (nil)
