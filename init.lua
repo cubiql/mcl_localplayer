@@ -507,7 +507,7 @@ local function process_clientbound_hello (payload)
 						local biome_seed = nil
 						local dimensions = nil
 						if handshake.proto == 6 then
-							biome_data_type = "engine_data"
+							biome_data_type = "levelgen_data"
 						end
 						if handshake.proto >= 9 then
 							biome_seed = handshake.biome_seed
