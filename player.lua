@@ -1,3 +1,8 @@
+local ipairs = ipairs
+
+local mathmin = math.min
+local mathmax = math.max
+
 ------------------------------------------------------------------------
 -- Player physics and input.
 ------------------------------------------------------------------------
@@ -94,6 +99,7 @@ local localplayer = {
 	saturation = 20,
 	in_auto_spin_attack = false,
 	riptide_eligible = false,
+	shield_timeout = 0.0,
 }
 mcl_localplayer.localplayer = localplayer
 
@@ -1109,6 +1115,12 @@ function localplayer.on_step (dtime, moveresult, params)
 		}
 	end
 
+	local t = self.shield_timeout
+	self.shield_timeout = mathmax (t - dtime, 0.0)
+	if t > 0.0 and t - dtime <= 0.0 then
+		mcl_localplayer.use_shield_belatedly ()
+	end
+
 	profile ("LocalPlayer camera control")
 	-- Set camera yaw and pitch.
 	local cam_yaw = control.yaw + self.yaw_offset
@@ -1394,8 +1406,6 @@ local mathcos = math.cos
 local mathsin = math.sin
 local mathasin = math.asin
 local mathatan2 = math.atan2
-
-local mathmin = math.min
 
 -- Pose definition format.
 -- {
@@ -1939,10 +1949,16 @@ function mcl_localplayer.do_posectrl (ctrlword)
 end
 
 function mcl_localplayer.do_shieldctrl (ctrlword)
-	if mcl_localplayer.proto >= 1 then
+	if mcl_localplayer.proto == 0 then
+		localplayer.blocking = ctrlword
+	elseif mcl_localplayer.proto < 10 then
 		error ("Did not expect server to dictate shield activation state")
+	else
+		localplayer.shield_timeout = ctrlword
+		if ctrlword >= 0 then
+			mcl_localplayer.disable_shield ()
+		end
 	end
-	localplayer.blocking = ctrlword
 end
 
 function mcl_localplayer.set_mount_pose (poseid)

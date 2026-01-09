@@ -197,7 +197,7 @@ dofile (core.get_modpath (modname) .. "/effects.lua")
 local profile = mcl_localplayer.profile
 local profile_done = mcl_localplayer.profile_done
 
-local PROTO_VERSION = 9
+local PROTO_VERSION = 10
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'
@@ -522,7 +522,7 @@ local function process_clientbound_hello (payload)
 				end
 
 				-- Initialize the CSM.
-				print (string.format ("*** Mineclonia CSM mod initialized (protocol=%d)",
+				print (string.format ("*** Mineclonia CSM initialized (protocol=%d)",
 						      mcl_localplayer.proto))
 				mcl_localplayer.init_player ()
 				mcl_localplayer.localplayer_initialized = true

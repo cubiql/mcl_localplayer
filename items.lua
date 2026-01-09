@@ -62,18 +62,24 @@ function mcl_localplayer.handle_offhand_item (stack)
 	end
 end
 
+local function enable_shield (offhand_p)
+	if not offhand_p then
+		mcl_localplayer.send_shieldctrl (2)
+		localplayer.blocking = 2
+	else
+		mcl_localplayer.send_shieldctrl (1)
+		localplayer.blocking = 1
+	end
+end
+
 function mcl_localplayer.use_item_locally (itemstack, class, offhand)
 	if item_being_placed then
 		mcl_localplayer.unuse_item ()
 	end
 
 	if class == "shield" then
-		if not offhand then
-			mcl_localplayer.send_shieldctrl (2)
-			localplayer.blocking = 2
-		else
-			mcl_localplayer.send_shieldctrl (1)
-			localplayer.blocking = 1
+		if localplayer.shield_timeout <= 0 then
+			enable_shield (offhand)
 		end
 	elseif class == "food" then
 		local _, hunger, _ = mcl_localplayer.get_player_vitals ()
@@ -99,6 +105,19 @@ function mcl_localplayer.use_item_locally (itemstack, class, offhand)
 	item_use_time = 0.0
 	offhand_placed = offhand
 	return true
+end
+
+function mcl_localplayer.use_shield_belatedly ()
+	if item_class == "shield" then
+		enable_shield (offhand_placed)
+	end
+end
+
+function mcl_localplayer.disable_shield ()
+	if item_class == "shield" and localplayer.blocking ~= 0 then
+		mcl_localplayer.send_shieldctrl (0)
+		localplayer.blocking = 0
+	end
 end
 
 function mcl_localplayer.unuse_item ()
