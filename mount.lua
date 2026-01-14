@@ -1040,9 +1040,14 @@ local boat = {
 local YAW_DRAG = 0.05
 local BOAT_DRAG = 0.45
 
-local BOAT_ANIMATION = {
+local BOAT_ANIMATION_OLD = {
 	x = 0,
 	y = 40,
+}
+
+local BOAT_ANIMATION_NEW = {
+	x = 1,
+	y = 456,
 }
 
 local boat_y_offset = 0.35
@@ -1152,7 +1157,10 @@ function boat:drive (dtime, moveresult, params)
 		speed = speed * math.pow (BOAT_DRAG, dtime)
 		if math.abs (speed) < 0.1 and speed ~= 0.0 then
 			speed = 0.0
-			self.object:set_animation (BOAT_ANIMATION, 0.2, true)
+			local animation = mcl_localplayer.proto < 10
+				and BOAT_ANIMATION_OLD
+				or BOAT_ANIMATION_NEW
+			self.object:set_animation (animation, 0.2, true)
 		end
 	end
 
@@ -1169,7 +1177,12 @@ function boat:drive (dtime, moveresult, params)
 	self.object:set_velocity (vel)
 	self._speed = speed
 	local f = math.sqrt (math.abs (speed))
-	self.object:set_animation_frame_speed (f * 8)
+	if mcl_localplayer.proto >= 10 then
+		f = f * 227
+	else
+		f = f * 8
+	end
+	self.object:set_animation_frame_speed (f)
 
 	local tsc = self._tsc + dtime
 	self._tsc = tsc
@@ -1208,13 +1221,12 @@ function boat:import_position (pos, vel)
 	end
 end
 
-local BOAT_ANIMATION = {
-	x = 0,
-	y = 40,
-}
 
 function boat:init_mount ()
-	self.object:set_animation (BOAT_ANIMATION, 0.2, true)
+	local animation = mcl_localplayer.proto < 10
+		and BOAT_ANIMATION_OLD
+		or BOAT_ANIMATION_NEW
+	self.object:set_animation (animation, speed, true)
 	self._last_sent_pos = nil
 	self._last_sent_vel = nil
 	self._last_sent_yaw = nil
