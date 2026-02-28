@@ -230,7 +230,7 @@ local function animate_wieldmesh (dtime)
 		if item_use_time >= NORMAL_EAT_DELAY
 			or (stack:get_name () == "mcl_ocean:dried_kelp"
 				and item_use_time >= NORMAL_EAT_DELAY * 0.5) then
-			local index = core.localplayer:get_wield_index () + 1
+			local index = core.localplayer:get_wield_index ()
 			item_use_time = 0.0
 			core.camera:reset_wieldmesh_override (0.0)
 			mcl_localplayer.send_eat_item (item_being_placed, index)
@@ -375,7 +375,7 @@ function mcl_localplayer.item_globalstep (dtime)
 
 	animate_wieldmesh (dtime)
 
-	local index = core.localplayer:get_wield_index () + 1
+	local index = core.localplayer:get_wield_index ()
 	local name = stack:get_name ()
 	local info = is_bow[name]
 
