@@ -792,6 +792,13 @@ function mob_table:import_vehicle_capabilities (caps)
 		self.jump_height = caps.jump_height
 	end
 
+	if caps.safe_fall_distance and mcl_localplayer.proto >= 11 then
+		if type (caps.safe_fall_distance) ~= "number" then
+			error ("Invalid `safe_fall_distance' field in vehicle capability table")
+		end
+		self.safe_fall_distance = caps.safe_fall_distance
+	end
+
 	if caps.ef_set and caps._EF then
 		if type (caps._EF) ~= "table" then
 			error ("Invalid status effect table in vehicle capability table")
