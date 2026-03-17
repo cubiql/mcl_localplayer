@@ -31,6 +31,10 @@ local NIGHT_VISION_LIGHTING_OPTIONS = {
 local y_to_dimension = mcl_localplayer.y_to_dimension
 local previous_lighting_cfg = nil
 local current_skybox_layer = nil
+local held_torch_lighting_cfg = {
+	ambient_level = 0,
+	range_squeeze = 0,
+}
 
 local biome_sky_color = "#7ba4ff"
 local biome_fog_color = "#c0d8ff"
@@ -131,7 +135,7 @@ local base_skybox_nether = {
 	},
 	sky = {
 		type = "plain",
-		base_color = "#330808",
+		base_color = "#4a0d08",
 		clouds = false,
 		fog = {
 			fog_distance = 96,
@@ -220,7 +224,6 @@ local function apply_skybox_weather_state ()
 end
 
 local fog_color_cache = {}
-
 local function end_fog_color (color)
 	if fog_color_cache[color] then
 		return fog_color_cache[color]
@@ -240,6 +243,41 @@ local function apply_skybox_biome_colors ()
 	base_skybox_overworld.sky.sky_color.dawn_horizon = biome_fog_color
 	base_skybox_nether.sky.base_color = biome_fog_color
 	base_skybox_end.sky.base_color = end_fog_color (biome_fog_color)
+end
+
+local function is_wielding_torch ()
+	local wielded = core.localplayer:get_wielded_item ()
+	if not wielded or wielded:is_empty () then
+		return false
+	end
+	local name = wielded:get_name ()
+	if not name or name == "" then
+		return false
+	end
+	if name == "mcl_torches:torch" then
+		return true
+	end
+	local ok, def = pcall (wielded.get_definition, wielded)
+	return ok and def and def.groups and (def.groups.torch or 0) > 0
+end
+
+local function get_wielded_torch_lighting (self_pos, lighting)
+	if not is_wielding_torch () or mcl_localplayer.localplayer:is_underwater () then
+		return lighting
+	end
+
+	local sample_pos = vector.round (vector.offset (self_pos, 0, 1, 0))
+	local light = core.get_node_light (sample_pos, nil) or 0
+	if light >= 12 then
+		return lighting
+	end
+
+	local ambient_boost = math.min (7, 12 - light)
+	held_torch_lighting_cfg.ambient_level
+		= math.max (lighting.ambient_level, ambient_boost)
+	held_torch_lighting_cfg.range_squeeze
+		= math.max (lighting.range_squeeze, 10 + ambient_boost * 2)
+	return held_torch_lighting_cfg
 end
 
 local current_climate = nil
@@ -326,11 +364,17 @@ function mcl_localplayer.tick_effects (self_pos, dtime)
 	if mcl_localplayer.has_effect ("night_vision") then
 		lighting = NIGHT_VISION_LIGHTING_OPTIONS
 	end
+	lighting = get_wielded_torch_lighting (self_pos, lighting)
 
-	if lighting ~= previous_lighting_cfg then
+	if not previous_lighting_cfg
+		or lighting.ambient_level ~= previous_lighting_cfg.ambient_level
+		or lighting.range_squeeze ~= previous_lighting_cfg.range_squeeze then
 		core.camera:set_ambient_lighting (lighting.ambient_level,
 						  lighting.range_squeeze)
-		previous_lighting_cfg = lighting
+		previous_lighting_cfg = {
+			ambient_level = lighting.ambient_level,
+			range_squeeze = lighting.range_squeeze,
+		}
 	end
 
 	local skybox_layer

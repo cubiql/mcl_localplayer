@@ -1,5 +1,8 @@
 Protocol version: 12
 
+This repository is a public fork of
+https://codeberg.org/halon/mcl_localplayer .
+
 `mcl_localplayer' is an optional client-side mod for the Luanti
 (formerly Minetest) game Mineclonia, which implements client-side
 prediction for a number of gameplay elements (such as bows and

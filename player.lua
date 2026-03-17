@@ -1018,7 +1018,7 @@ function localplayer:post_motion_step (v, self_pos, control, params)
 	self._was_touching_ground = self.touching_ground
 end
 
-core.register_on_teleport_localplayer (function (new_pos)
+local function handle_localplayer_teleport (new_pos)
 	localplayer.fall_distance = 0
 	localplayer.last_fall_y = nil
 
@@ -1026,10 +1026,16 @@ core.register_on_teleport_localplayer (function (new_pos)
 	-- teleporting players.
 	localplayer.yaw_offset = 0
 	localplayer.pitch_offset = 0
-	if mcl_localplayer.debug then
+	if mcl_localplayer.debug and new_pos then
 		print ("Teleported to: " .. new_pos:to_string ())
 	end
-end)
+end
+
+if core.register_on_teleport_localplayer then
+	core.register_on_teleport_localplayer (handle_localplayer_teleport)
+elseif mcl_localplayer.debug then
+	print ("register_on_teleport_localplayer is unavailable; teleport resets disabled")
+end
 
 function localplayer:is_underwater ()
 	local depth = self.swimming and 0.5 or 1.75

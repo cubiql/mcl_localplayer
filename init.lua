@@ -189,6 +189,7 @@ dofile (core.get_modpath (modname) .. "/random.lua")
 dofile (core.get_modpath (modname) .. "/noise.lua")
 dofile (core.get_modpath (modname) .. "/level.lua")
 dofile (core.get_modpath (modname) .. "/effects.lua")
+dofile (core.get_modpath (modname) .. "/blaze_effects.lua")
 
 ------------------------------------------------------------------------
 -- Client-server communication.
@@ -271,8 +272,9 @@ function mcl_localplayer.send_playeranim (animname)
 end
 
 function mcl_localplayer.send_damage (damage)
-	local damage = core.write_json (damage)
-	mcl_localplayer.send (SERVERBOUND_DAMAGE .. damage)
+	if mcl_localplayer.debug then
+		print ("Client-side damage reporting is disabled; server authority required")
+	end
 end
 
 function mcl_localplayer.send_get_ammo (challenge)
