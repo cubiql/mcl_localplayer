@@ -1,8 +1,13 @@
+local mathceil = math.ceil
+local mathsin = math.sin
+local mathcos = math.cos
+local mathmax = math.max
+
 ------------------------------------------------------------------------
 -- Wielditem placement.
 ------------------------------------------------------------------------
 
-local function get_placement_class_1 (item, name_of_pointed_thing)
+local function get_placement_class_1 (item, name_of_pointed_thing, pointed_thing_type)
 	local itemname = type (item) == "string"
 		and item
 		or (item:is_empty () and "default" or item:get_name ())
@@ -13,10 +18,17 @@ local function get_placement_class_1 (item, name_of_pointed_thing)
 
 	if place_def then
 		local special_type = place_def[name_of_pointed_thing]
+		if mcl_localplayer.proto >= 12 and not special_type then
+			-- Permit selecting item classes generally
+			-- with reference to the type of the pointed
+			-- thing.
+			special_type = place_def[pointed_thing_type]
+		end
 		if not special_type and place_def.inherit then
 			special_type
 				= get_placement_class_1 (place_def.inherit,
-							 name_of_pointed_thing)
+							 name_of_pointed_thing,
+							 pointed_thing_type)
 		end
 
 		return special_type or place_def.default
@@ -25,8 +37,9 @@ local function get_placement_class_1 (item, name_of_pointed_thing)
 	return nil
 end
 
-local function get_placement_class (item, name_of_pointed_thing)
-	local class = get_placement_class_1 (item, name_of_pointed_thing)
+local function get_placement_class (item, name_of_pointed_thing, pointed_thing_type)
+	local class = get_placement_class_1 (item, name_of_pointed_thing,
+					     pointed_thing_type)
 		or "undefined"
 
 	if class == "food" then
@@ -104,6 +117,12 @@ function mcl_localplayer.use_item_locally (itemstack, class, offhand)
 	item_class = class
 	item_use_time = 0.0
 	offhand_placed = offhand
+
+	if (item_class == "food"
+	    or item_class == "food_edible_whilst_full") then
+		mcl_localplayer.start_eating_effects ()
+	end
+
 	return true
 end
 
@@ -128,6 +147,11 @@ function mcl_localplayer.unuse_item ()
 		localplayer.blocking = 0
 	end
 
+	if (item_class == "food"
+	    or item_class == "food_edible_whilst_full") then
+		mcl_localplayer.cancel_eating_effects ()
+	end
+
 	item_class = nil
 	item_use_time = 0.0
 end
@@ -135,18 +159,25 @@ end
 function mcl_localplayer.intercept_wielditem_placement (item, pointed_thing)
 	local control = core.localplayer:get_control ()
 	local offhand = false
+	local pointed_thing_type = pointed_thing.type
+	if control.sneak then
+		pointed_thing_type = pointed_thing_type .. "_sneaking"
+	end
 	if mcl_localplayer.proto < 1 then
 		return false
 	elseif pointed_thing.type == "node" and not control.sneak then
 		local node = core.get_node_or_nil (pointed_thing.under)
 		if node then
 			local name = node.name
-			local class = get_placement_class (item, name)
+			local class = get_placement_class (item, name,
+							   pointed_thing_type)
 			if class == "default" then
 				return false
 			elseif class == "undefined" then
 				-- What about the offhand item?
-				class = get_placement_class (localplayer.offhand_item, name)
+				class = get_placement_class (localplayer.offhand_item,
+							     name,
+							     pointed_thing_type)
 				if class == "default" or class == "undefined" then
 					return false
 				end
@@ -159,12 +190,15 @@ function mcl_localplayer.intercept_wielditem_placement (item, pointed_thing)
 	elseif pointed_thing.type == "object" and not control.sneak then
 		local name = pointed_thing.ref:get_name ()
 		if name then
-			local class = get_placement_class (item, name)
+			local class = get_placement_class (item, name,
+							   pointed_thing_type)
 			if class == "default" then
 				return false
 			elseif class == "undefined" then
 				-- What about the offhand item?
-				class = get_placement_class (localplayer.offhand_item, name)
+				class = get_placement_class (localplayer.offhand_item,
+							     name,
+							     pointed_thing_type)
 				if class == "default" or class == "undefined" then
 					return false
 				end
@@ -175,11 +209,14 @@ function mcl_localplayer.intercept_wielditem_placement (item, pointed_thing)
 			return mcl_localplayer.use_item_locally (item, class, offhand)
 		end
 	else
-		local class = get_placement_class (item, "default")
+		local class = get_placement_class (item, "default",
+						   pointed_thing_type)
 		if class == "default" then
 			return false
 		elseif class == "undefined" then
-			class = get_placement_class (localplayer.offhand_item, "default")
+			class = get_placement_class (localplayer.offhand_item,
+						     "default",
+						     pointed_thing_type)
 			if class == "default" or class == "undefined" then
 				return false
 			end
@@ -234,6 +271,7 @@ local function animate_wieldmesh (dtime)
 			item_use_time = 0.0
 			core.camera:reset_wieldmesh_override (0.0)
 			mcl_localplayer.send_eat_item (item_being_placed, index)
+			mcl_localplayer.play_eating_sound ()
 		end
 	elseif proto >= 4 and item_class == "trident" then
 		mcl_localplayer.animate_trident_wieldmesh (item_use_time)
@@ -332,6 +370,8 @@ end
 local BOW_FOV_FACTOR = "mcl_localplayer:bow_fov_factor"
 
 function mcl_localplayer.item_globalstep (dtime)
+	mcl_localplayer.step_eating_effects (dtime)
+
 	local stack = core.localplayer:get_wielded_item ()
 	-- Read player controls.
 	local controls = core.localplayer:get_control ()
@@ -609,5 +649,134 @@ function mcl_localplayer.check_spyglass ()
 		mcl_localplayer.clear_fov_factor (SPYGLASS_FOV_MODIFIER)
 		core.localplayer:hud_remove (spyglass_active)
 		spyglass_active = nil
+	end
+end
+
+------------------------------------------------------------------------
+-- Eating effects.
+------------------------------------------------------------------------
+
+local anim_progress = -1
+local anim_item_def = nil
+local anim_item_name = nil
+
+local item_texpools = {}
+
+function mcl_localplayer.start_eating_effects ()
+	local name = item_being_placed:get_name ()
+	local def = core.get_item_def (name)
+	if def then
+		anim_progress = 0.0
+		anim_item_def = def
+		anim_item_name = name
+	end
+end
+
+function mcl_localplayer.cancel_eating_effects ()
+	anim_progress = -1
+	anim_item_def = nil
+	anim_item_name = nil
+end
+
+local function generate_item_texpool (name, texture)
+	-- Recall that textures are never released.
+	if item_texpools[name] then
+		return item_texpools[name]
+	else
+		local texpool = {}
+		for i = 1, 30 do
+			local x = math.random (-16, 0)
+			local str = "[combine:3x3:" .. x .. "," .. x .. "=" .. texture
+			texpool[i] = str
+		end
+		item_texpools[name] = texpool
+		return texpool
+	end
+end
+
+function mcl_localplayer.step_eating_effects (dtime)
+	if anim_progress < 0.0 then
+		return
+	end
+	local pos = core.localplayer:get_pos ()
+	local t = anim_progress + dtime
+	local foodtype = (anim_item_def.groups.food or 0)
+	if mathceil (t * 8) > mathceil (anim_progress * 8) then
+		local spawn_particles = foodtype ~= 3
+		local texture = anim_item_def.inventory_image
+		if spawn_particles and texture and #texture > 0 then
+			local mode = core.camera:get_camera_mode ()
+			local amount = math.random (5, 8)
+			local texpool = generate_item_texpool (anim_item_name,
+							       texture)
+			local pos1 = vector.new (pos)
+			local vel = vector.new (0, 0, 0)
+			local localplayer = mcl_localplayer.localplayer
+			local offset = core.camera:get_offset ()
+			local dir = core.camera:get_look_dir ()
+			local pitch = mathmax (-core.camera:get_look_vertical (), 0)
+			local particle = {
+				pos = pos1,
+				velocity = vel,
+				texture = "",
+				expirationtime = 1.0,
+				size = 1,
+			}
+			local yaw = localplayer.last_yaw
+			local s = -mathsin (yaw)
+			local c = mathcos (yaw)
+			local sp = mathsin (pitch)
+			local cp = mathcos (pitch)
+			if mode > 1 then
+				sp = 0.0
+				cp = 1.0
+				dir.x = s
+				dir.y = 0.0
+				dir.z = c
+			end
+			for i = 1, amount do
+				local texture = texpool[math.random (#texpool)]
+				particle.texture = texture
+				local vx = (math.random () - 0.5)
+				local vz = math.random () * 0.1
+				local vy = -0.8 + math.random () * -1.4
+				vel.x = (vx * c + vz * s) + (sp * vy * s)
+				vel.z = (vz * c - vx * s) + (sp * vy * c)
+				vel.y = vy * cp
+				pos1.y = pos.y + offset.y + math.random () * -0.2 + dir.y * 0.3
+				pos1.x = pos.x + dir.x * 0.3 + (math.random () * 0.5 - 0.25) * c
+				pos1.z = pos.z + dir.z * 0.3 + (math.random () * 0.5 - 0.25) * s
+				core.add_particle (particle)
+			end
+		end
+	end
+	if mathceil (t * 5) > mathceil (anim_progress * 5) then
+		if foodtype == 3 then
+			core.sound_play ("survival_thirst_drink", {
+				gain = 0.75,
+				pitch = 0.95 + math.random () * 0.1,
+			}, true)
+		else
+			core.sound_play ("mcl_hunger_bite", {
+				gain = 0.05,
+				pitch = 0.95 + math.random () * 0.1,
+			}, true)
+		end
+	end
+	anim_progress = t
+end
+
+function mcl_localplayer.play_eating_sound ()
+	if anim_item_def and mcl_localplayer.proto >= 12 then
+		local foodtype = (anim_item_def.groups.food or 0)
+		if foodtype == 3 then
+			core.sound_play ("mcl_potions_drinking", {
+				gain = 0.75,
+			}, true)
+		else
+			core.sound_play ("mcl_hunger_bite", {
+				gain = 0.4,
+			}, true)
+		end
 	end
 end

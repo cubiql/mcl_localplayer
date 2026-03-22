@@ -197,7 +197,7 @@ dofile (core.get_modpath (modname) .. "/effects.lua")
 local profile = mcl_localplayer.profile
 local profile_done = mcl_localplayer.profile_done
 
-local PROTO_VERSION = 11
+local PROTO_VERSION = 12
 
 -- Serverbound messages.
 local SERVERBOUND_HELLO = 'aa'

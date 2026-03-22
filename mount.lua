@@ -1233,7 +1233,7 @@ function boat:init_mount ()
 	local animation = mcl_localplayer.proto < 10
 		and BOAT_ANIMATION_OLD
 		or BOAT_ANIMATION_NEW
-	self.object:set_animation (animation, speed, true)
+	self.object:set_animation (animation, nil, true)
 	self._last_sent_pos = nil
 	self._last_sent_vel = nil
 	self._last_sent_yaw = nil
