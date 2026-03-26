@@ -612,14 +612,14 @@ local function receive_modchannel_message (channel_name, sender, message)
 				end
 				mcl_localplayer.do_bow_capabilities (caps.challenge, caps)
 			elseif msgtype == CLIENTBOUND_VEHICLE_HANDOFF then
-				local name, id = unpack (payload:split (','))
+				local name, id = unpack (string.split (payload, ','))
 				if not name or not id or not tonumber (id) then
 					error ("Invalid ClientboundVehicleHandoff message")
 				end
 				mcl_localplayer.handle_vehicle_handoff (name, tonumber (id))
 			elseif msgtype == CLIENTBOUND_VEHICLE_POSITION then
 				local id, x, y, z, vx, vy, vz
-					= unpack (payload:split (','))
+					= unpack (string.split (payload, ','))
 				if not id or not x or not y or not z or not vx or not vy or not vz then
 					error ("Parameters absent from ClientboundVehiclePosition message")
 				end
@@ -650,7 +650,7 @@ local function receive_modchannel_message (channel_name, sender, message)
 				end
 				mcl_localplayer.handle_vehicle_capabilities (json.id, json)
 			elseif msgtype == CLIENTBOUND_KNOCKBACK then
-				local x, y, z = unpack (payload:split (','))
+				local x, y, z = unpack (string.split (payload, ','))
 				if not x or not y or not z then
 					error ("Invalid ClientboundKnockback message: " .. payload)
 				end
@@ -675,7 +675,7 @@ local function receive_modchannel_message (channel_name, sender, message)
 				local payload = core.parse_json (payload)
 				mcl_localplayer.do_trident_ctrl (payload)
 			elseif msgtype == CLIENTBOUND_BIOME_DATA then
-				local split = payload:split (',', false, 1)
+				local split = string.split (payload, ',', false, 1)
 				local index_len = tonumber (split[1])
 				assert (index_len, "No index length provided in ClientboundBiomeData message")
 				local index = split[2]:sub (1, index_len)

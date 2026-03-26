@@ -181,7 +181,7 @@ local function block_index (bx, by, bz)
 end
 
 function mcl_localplayer.import_biome_data (index_len, index, index_payload)
-	local indices = index:split (',')
+	local indices = string.split (index, ',')
 	assert (#indices % 2 == 0, "Odd number of indices provided in biome data")
 	local discard = {}
 	for i = 1, #indices - 1, 2 do
